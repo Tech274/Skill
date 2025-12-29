@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { API, useAuth } from "../App";
 import Layout from "../components/Layout";
 import { Button } from "../components/ui/button";
-import { LuCircleCheck, LuLoader2, LuCircleX } from "react-icons/lu";
+import { LuCircleCheck, LuLoaderCircle, LuCircleX } from "react-icons/lu";
 
 export default function CheckoutSuccess() {
   const [searchParams] = useSearchParams();
@@ -66,7 +66,7 @@ export default function CheckoutSuccess() {
         {status === "loading" && (
           <>
             <div className="w-20 h-20 bg-zinc-800 rounded-full mx-auto mb-6 flex items-center justify-center">
-              <LuLoader2 className="w-10 h-10 text-cyan-400 animate-spin" />
+              <LuLoaderCircle className="w-10 h-10 text-cyan-400 animate-spin" />
             </div>
             <h1 className="text-2xl font-bold mb-4">Processing Payment...</h1>
             <p className="text-zinc-400">
@@ -97,7 +97,7 @@ export default function CheckoutSuccess() {
         {status === "pending" && (
           <>
             <div className="w-20 h-20 bg-amber-500/20 rounded-full mx-auto mb-6 flex items-center justify-center">
-              <LuLoader2 className="w-10 h-10 text-amber-400" />
+              <LuLoaderCircle className="w-10 h-10 text-amber-400" />
             </div>
             <h1 className="text-2xl font-bold mb-4">Payment Processing</h1>
             <p className="text-zinc-400 mb-8">
