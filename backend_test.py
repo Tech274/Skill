@@ -142,7 +142,11 @@ class SkillTrack365APITester:
             ("/dashboard", "GET"),
             ("/labs/complete", "POST"),
             ("/assessments/submit", "POST"),
-            ("/projects/complete", "POST")
+            ("/projects/complete", "POST"),
+            ("/bookmarks", "GET"),
+            ("/notes/lab-test-1", "GET"),
+            ("/certificates", "GET"),
+            ("/certificates/generate", "POST")
         ]
         
         for endpoint, method in endpoints:
@@ -157,6 +161,30 @@ class SkillTrack365APITester:
                 self.log_test(f"Auth Protection - {endpoint}", success, details)
             except Exception as e:
                 self.log_test(f"Auth Protection - {endpoint}", False, str(e))
+
+    def test_assessment_review_endpoint(self, assessment_id):
+        """Test assessment review endpoint without auth"""
+        try:
+            response = requests.get(f"{self.api_url}/assessments/{assessment_id}/review", timeout=10)
+            success = response.status_code == 401
+            details = f"Status: {response.status_code} (Expected: 401)"
+            self.log_test(f"Assessment Review Protection ({assessment_id})", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Assessment Review Protection ({assessment_id})", False, str(e))
+            return False
+
+    def test_certificate_download_endpoint(self):
+        """Test certificate download endpoint without auth"""
+        try:
+            response = requests.get(f"{self.api_url}/certificates/test-cert-id/download", timeout=10)
+            success = response.status_code == 401
+            details = f"Status: {response.status_code} (Expected: 401)"
+            self.log_test("Certificate Download Protection", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Certificate Download Protection", False, str(e))
+            return False
 
     def run_all_tests(self):
         """Run all backend API tests"""
