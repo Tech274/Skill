@@ -12,7 +12,9 @@ import {
   LuCheckCircle,
   LuZap,
 } from "react-icons/lu";
-import { SiAmazonwebservices, SiMicrosoftazure, SiGooglecloud } from "react-icons/si";
+import { FaAws } from "react-icons/fa";
+import { VscAzure } from "react-icons/vsc";
+import { SiGooglecloud } from "react-icons/si";
 
 const features = [
   {
@@ -42,8 +44,8 @@ const features = [
 ];
 
 const certifications = [
-  { vendor: "AWS", name: "Solutions Architect", color: "#FF9900", icon: SiAmazonwebservices },
-  { vendor: "Azure", name: "Administrator", color: "#0078D4", icon: SiMicrosoftazure },
+  { vendor: "AWS", name: "Solutions Architect", color: "#FF9900", icon: FaAws },
+  { vendor: "Azure", name: "Administrator", color: "#0078D4", icon: VscAzure },
   { vendor: "GCP", name: "Cloud Engineer", color: "#4285F4", icon: SiGooglecloud },
 ];
 

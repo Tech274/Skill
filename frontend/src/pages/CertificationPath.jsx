@@ -19,11 +19,13 @@ import {
   LuCheckCircle,
   LuCircle,
 } from "react-icons/lu";
-import { SiAmazonwebservices, SiMicrosoftazure, SiGooglecloud } from "react-icons/si";
+import { FaAws } from "react-icons/fa";
+import { VscAzure } from "react-icons/vsc";
+import { SiGooglecloud } from "react-icons/si";
 
 const vendorIcons = {
-  AWS: SiAmazonwebservices,
-  Azure: SiMicrosoftazure,
+  AWS: FaAws,
+  Azure: VscAzure,
   GCP: SiGooglecloud,
   DevOps: LuTerminal,
 };

@@ -15,7 +15,9 @@ import {
   LuSearch,
   LuChevronDown,
 } from "react-icons/lu";
-import { SiAmazonwebservices, SiMicrosoftazure, SiGooglecloud } from "react-icons/si";
+import { FaAws } from "react-icons/fa";
+import { VscAzure } from "react-icons/vsc";
+import { SiGooglecloud } from "react-icons/si";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -178,10 +180,10 @@ export default function Layout({ children }) {
           <p className="text-xs text-zinc-500 mb-2">Quick Access</p>
           <div className="flex gap-2">
             <button className="p-2 bg-zinc-800/50 rounded-lg hover:bg-zinc-800 transition-colors" title="AWS">
-              <SiAmazonwebservices className="w-5 h-5 text-[#FF9900]" />
+              <FaAws className="w-5 h-5 text-[#FF9900]" />
             </button>
             <button className="p-2 bg-zinc-800/50 rounded-lg hover:bg-zinc-800 transition-colors" title="Azure">
-              <SiMicrosoftazure className="w-5 h-5 text-[#0078D4]" />
+              <VscAzure className="w-5 h-5 text-[#0078D4]" />
             </button>
             <button className="p-2 bg-zinc-800/50 rounded-lg hover:bg-zinc-800 transition-colors" title="GCP">
               <SiGooglecloud className="w-5 h-5 text-[#4285F4]" />
