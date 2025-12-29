@@ -21,29 +21,27 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - Checkout: Stripe subscription (monthly/yearly plans)
 - Profile: User info, certificates, badges
 
-## What's Been Implemented (December 29, 2025)
+## What's Been Implemented
 
-### Backend (FastAPI + MongoDB)
+### Phase 1: MVP (December 29, 2025)
 - ✅ User authentication with Google OAuth (Emergent Auth)
 - ✅ Session management with cookies
 - ✅ CRUD operations for certifications, labs, assessments, projects
 - ✅ User progress tracking and readiness calculation
 - ✅ Stripe checkout integration for subscriptions
-- ✅ Data seeding endpoint for test data
-
-### Frontend (React + Tailwind + Shadcn UI)
-- ✅ Landing page with hero, stats, certification preview
-- ✅ Login page with Google OAuth
-- ✅ Certification Hub with filterable cards
-- ✅ Certification Path with tabbed navigation
-- ✅ Cloud Labs listing and Lab Detail pages
-- ✅ Active Lab with split-screen (instructions + simulated terminal)
-- ✅ Assessments listing and Assessment Take pages
-- ✅ Assessment Results with weak areas analysis
-- ✅ Projects listing and Project Workspace
+- ✅ Landing page, Login, Certification Hub, Certification Path
+- ✅ Cloud Labs, Active Lab with simulated terminal
+- ✅ Assessments, Assessment Results
+- ✅ Projects, Project Workspace
 - ✅ Skilltrack Dashboard with charts (Recharts)
-- ✅ Checkout page with Stripe payment
-- ✅ Profile page with badges and certificates
+- ✅ Profile page with badges
+
+### Phase 2: Enhanced Features (December 29, 2025)
+- ✅ **PDF Certificate Generation** - Generate downloadable PDF certificates for 80%+ readiness
+- ✅ **Assessment Review Mode** - Review submitted answers with correct/incorrect marking
+- ✅ **Lab Bookmarking** - Save/unsave favorite labs for quick access
+- ✅ **Lab Notes** - Take and save notes during lab sessions
+- ✅ **Social Sharing** - Share certificates on Twitter/LinkedIn with copy link
 
 ### Pre-populated Data
 - 6 Certifications: AWS SAA-C03, AWS DVA-C02, AZ-900, AZ-104, GCP ACE, DevOps Pro
@@ -53,27 +51,27 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 
 ## Prioritized Backlog
 
-### P0 (Critical)
+### P0 (Critical) - DONE
 - All critical features implemented ✅
 
-### P1 (High Priority)
-- [ ] Email notifications for subscription status
-- [ ] PDF certificate generation and download
-- [ ] Lab bookmarking and notes
-- [ ] Assessment review mode (review answers after completion)
+### P1 (High Priority) - DONE
+- ✅ PDF certificate generation and download
+- ✅ Lab bookmarking and notes
+- ✅ Assessment review mode
+- ✅ Social sharing of certificates
 
 ### P2 (Medium Priority)
-- [ ] Social sharing of certificates
+- [ ] Email notifications for subscription status
 - [ ] Leaderboard/rankings
 - [ ] Discussion forums per certification
 - [ ] Video content integration
-- [ ] Mobile-responsive improvements
+- [ ] Mobile app (React Native)
 
 ### P3 (Nice to Have)
 - [ ] AI-powered study recommendations
 - [ ] Spaced repetition for exam prep
-- [ ] Integration with actual cloud sandboxes
-- [ ] Team/enterprise features
+- [ ] Integration with actual cloud sandboxes (AWS/Azure/GCP)
+- [ ] Team/enterprise features with admin dashboard
 
 ## Technical Architecture
 - **Frontend:** React 18, Tailwind CSS, Shadcn UI, Framer Motion, Recharts
@@ -81,25 +79,54 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - **Database:** MongoDB
 - **Auth:** Emergent Google OAuth
 - **Payments:** Stripe (test mode)
+- **PDF Generation:** ReportLab
 - **Deployment:** Kubernetes-based container
 
 ## API Endpoints
+### Authentication
 - `POST /api/auth/session` - Create session from OAuth
 - `GET /api/auth/me` - Get current user
 - `POST /api/auth/logout` - Logout user
+
+### Certifications
 - `GET /api/certifications` - List all certifications
 - `GET /api/certifications/{cert_id}` - Get certification details
 - `GET /api/certifications/{cert_id}/labs` - Get labs for certification
 - `GET /api/certifications/{cert_id}/assessments` - Get assessments
 - `GET /api/certifications/{cert_id}/projects` - Get projects
+
+### Labs
 - `GET /api/labs/{lab_id}` - Get lab details
 - `POST /api/labs/complete` - Mark lab as complete
+
+### Assessments
 - `GET /api/assessments/{assessment_id}` - Get assessment with questions
 - `POST /api/assessments/submit` - Submit assessment answers
+- `GET /api/assessments/{assessment_id}/review` - Review submitted answers
+
+### Projects
 - `GET /api/projects/{project_id}` - Get project details
 - `POST /api/projects/complete` - Mark project as complete
+
+### Dashboard & Progress
 - `GET /api/dashboard` - Get user dashboard data
 - `GET /api/progress/{cert_id}` - Get certification progress
+
+### Bookmarks & Notes
+- `GET /api/bookmarks` - Get user's bookmarks
+- `POST /api/bookmarks` - Toggle bookmark
+- `GET /api/notes/{lab_id}` - Get note for lab
+- `POST /api/notes` - Save note
+
+### Certificates
+- `GET /api/certificates` - Get earned certificates
+- `POST /api/certificates/generate` - Generate certificate (requires 80%+ readiness)
+- `GET /api/certificates/{id}/download` - Download PDF certificate
+- `GET /api/certificates/public/{id}` - Get public certificate data
+
+### Payments
 - `POST /api/checkout/create` - Create Stripe checkout session
 - `GET /api/checkout/status/{session_id}` - Check payment status
+
+### Utility
 - `POST /api/seed` - Seed database with test data
