@@ -1322,6 +1322,307 @@ async def seed_data():
 
 # ============== ROOT ENDPOINT ==============
 
+# ============== BOOKMARKS & NOTES ROUTES ==============
+
+@api_router.get("/bookmarks")
+async def get_bookmarks(user: Dict = Depends(require_auth)):
+    bookmarks = await db.user_bookmarks.find(
+        {"user_id": user["user_id"]},
+        {"_id": 0}
+    ).to_list(100)
+    return bookmarks
+
+@api_router.post("/bookmarks")
+async def toggle_bookmark(data: BookmarkRequest, user: Dict = Depends(require_auth)):
+    existing = await db.user_bookmarks.find_one(
+        {"user_id": user["user_id"], "lab_id": data.lab_id},
+        {"_id": 0}
+    )
+    
+    if data.bookmarked:
+        if not existing:
+            await db.user_bookmarks.insert_one({
+                "user_id": user["user_id"],
+                "lab_id": data.lab_id,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+        return {"bookmarked": True}
+    else:
+        if existing:
+            await db.user_bookmarks.delete_one({"user_id": user["user_id"], "lab_id": data.lab_id})
+        return {"bookmarked": False}
+
+@api_router.get("/notes")
+async def get_notes(user: Dict = Depends(require_auth)):
+    notes = await db.user_notes.find(
+        {"user_id": user["user_id"]},
+        {"_id": 0}
+    ).to_list(100)
+    return notes
+
+@api_router.get("/notes/{lab_id}")
+async def get_note(lab_id: str, user: Dict = Depends(require_auth)):
+    note = await db.user_notes.find_one(
+        {"user_id": user["user_id"], "lab_id": lab_id},
+        {"_id": 0}
+    )
+    return note or {"lab_id": lab_id, "content": ""}
+
+@api_router.post("/notes")
+async def save_note(data: NoteRequest, user: Dict = Depends(require_auth)):
+    await db.user_notes.update_one(
+        {"user_id": user["user_id"], "lab_id": data.lab_id},
+        {
+            "$set": {
+                "content": data.content,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            },
+            "$setOnInsert": {
+                "user_id": user["user_id"],
+                "lab_id": data.lab_id,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+        },
+        upsert=True
+    )
+    return {"success": True}
+
+# ============== ASSESSMENT REVIEW ROUTES ==============
+
+@api_router.get("/assessments/{assessment_id}/review")
+async def get_assessment_review(assessment_id: str, user: Dict = Depends(require_auth)):
+    """Get assessment with answers for review mode"""
+    assessment = await db.assessments.find_one({"assessment_id": assessment_id}, {"_id": 0})
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    
+    # Get user's submission for this assessment
+    progress_list = await db.user_progress.find(
+        {"user_id": user["user_id"]},
+        {"_id": 0}
+    ).to_list(100)
+    
+    user_submission = None
+    for progress in progress_list:
+        for completed in progress.get("assessments_completed", []):
+            if completed.get("assessment_id") == assessment_id:
+                user_submission = completed
+                break
+    
+    # Add correct answers and user answers to each question
+    questions_with_review = []
+    for q in assessment.get("questions", []):
+        q_copy = dict(q)
+        q_copy["user_answer"] = user_submission.get("answers", {}).get(q["id"]) if user_submission else None
+        q_copy["is_correct"] = q_copy["user_answer"] == q["correct_answer"] if q_copy["user_answer"] else False
+        questions_with_review.append(q_copy)
+    
+    return {
+        "assessment_id": assessment_id,
+        "title": assessment.get("title"),
+        "type": assessment.get("type"),
+        "questions": questions_with_review,
+        "user_score": user_submission.get("score") if user_submission else None,
+        "passed": user_submission.get("passed") if user_submission else None
+    }
+
+# ============== CERTIFICATE ROUTES ==============
+
+@api_router.get("/certificates")
+async def get_certificates(user: Dict = Depends(require_auth)):
+    """Get all earned certificates for the user"""
+    certificates = await db.user_certificates.find(
+        {"user_id": user["user_id"]},
+        {"_id": 0}
+    ).to_list(100)
+    return certificates
+
+@api_router.post("/certificates/generate")
+async def generate_certificate(data: CertificateRequest, user: Dict = Depends(require_auth)):
+    """Generate a certificate for a completed certification"""
+    # Check if user has 80%+ readiness
+    progress = await db.user_progress.find_one(
+        {"user_id": user["user_id"], "cert_id": data.cert_id},
+        {"_id": 0}
+    )
+    
+    if not progress or progress.get("readiness_percentage", 0) < 80:
+        raise HTTPException(status_code=400, detail="Need 80%+ readiness to earn certificate")
+    
+    # Get certification details
+    cert = await db.certifications.find_one({"cert_id": data.cert_id}, {"_id": 0})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    # Check if certificate already exists
+    existing = await db.user_certificates.find_one(
+        {"user_id": user["user_id"], "cert_id": data.cert_id},
+        {"_id": 0}
+    )
+    
+    if existing:
+        return existing
+    
+    # Generate certificate ID
+    cert_number = f"ST365-{uuid.uuid4().hex[:8].upper()}"
+    
+    # Create certificate record
+    certificate = {
+        "certificate_id": cert_number,
+        "user_id": user["user_id"],
+        "user_name": user["name"],
+        "user_email": user["email"],
+        "cert_id": data.cert_id,
+        "cert_name": cert["name"],
+        "cert_code": cert["code"],
+        "vendor": cert["vendor"],
+        "readiness_percentage": progress["readiness_percentage"],
+        "labs_completed": len(progress.get("labs_completed", [])),
+        "assessments_passed": len([a for a in progress.get("assessments_completed", []) if a.get("passed")]),
+        "projects_completed": len(progress.get("projects_completed", [])),
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "share_url": f"/certificate/{cert_number}"
+    }
+    
+    await db.user_certificates.insert_one(certificate)
+    
+    return certificate
+
+@api_router.get("/certificates/{certificate_id}/download")
+async def download_certificate(certificate_id: str, user: Dict = Depends(require_auth)):
+    """Download certificate as PDF"""
+    certificate = await db.user_certificates.find_one(
+        {"certificate_id": certificate_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    
+    if not certificate:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    
+    # Generate PDF
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), 
+                           rightMargin=50, leftMargin=50, 
+                           topMargin=50, bottomMargin=50)
+    
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Title'],
+        fontSize=36,
+        textColor=colors.HexColor('#06B6D4'),
+        spaceAfter=20,
+        alignment=TA_CENTER
+    )
+    
+    subtitle_style = ParagraphStyle(
+        'CustomSubtitle',
+        parent=styles['Normal'],
+        fontSize=14,
+        textColor=colors.HexColor('#71717A'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    
+    name_style = ParagraphStyle(
+        'NameStyle',
+        parent=styles['Title'],
+        fontSize=28,
+        textColor=colors.HexColor('#FFFFFF'),
+        spaceAfter=20,
+        alignment=TA_CENTER
+    )
+    
+    cert_style = ParagraphStyle(
+        'CertStyle',
+        parent=styles['Normal'],
+        fontSize=18,
+        textColor=colors.HexColor('#A1A1AA'),
+        spaceAfter=10,
+        alignment=TA_CENTER
+    )
+    
+    detail_style = ParagraphStyle(
+        'DetailStyle',
+        parent=styles['Normal'],
+        fontSize=12,
+        textColor=colors.HexColor('#71717A'),
+        alignment=TA_CENTER
+    )
+    
+    # Certificate content
+    elements.append(Spacer(1, 30))
+    elements.append(Paragraph("SKILLTRACK365", title_style))
+    elements.append(Paragraph("Certificate of Completion", subtitle_style))
+    elements.append(Spacer(1, 20))
+    elements.append(Paragraph("This certifies that", cert_style))
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(certificate["user_name"], name_style))
+    elements.append(Spacer(1, 20))
+    elements.append(Paragraph("has successfully completed the certification path for", cert_style))
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"{certificate['vendor']} {certificate['cert_name']}", name_style))
+    elements.append(Paragraph(f"({certificate['cert_code']})", cert_style))
+    elements.append(Spacer(1, 30))
+    
+    # Stats
+    stats_text = f"Readiness: {certificate['readiness_percentage']}% | Labs: {certificate['labs_completed']} | Assessments: {certificate['assessments_passed']} | Projects: {certificate['projects_completed']}"
+    elements.append(Paragraph(stats_text, detail_style))
+    elements.append(Spacer(1, 20))
+    
+    # Certificate ID and Date
+    issued_date = datetime.fromisoformat(certificate["issued_at"].replace('Z', '+00:00')).strftime("%B %d, %Y")
+    elements.append(Paragraph(f"Certificate ID: {certificate['certificate_id']}", detail_style))
+    elements.append(Paragraph(f"Issued: {issued_date}", detail_style))
+    
+    # Build PDF
+    doc.build(elements)
+    buffer.seek(0)
+    
+    filename = f"SkillTrack365_{certificate['cert_code']}_{certificate['certificate_id']}.pdf"
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@api_router.get("/certificates/public/{certificate_id}")
+async def get_public_certificate(certificate_id: str):
+    """Get public certificate data for sharing"""
+    certificate = await db.user_certificates.find_one(
+        {"certificate_id": certificate_id},
+        {"_id": 0, "user_email": 0}
+    )
+    
+    if not certificate:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    
+    return certificate
+
+# ============== SHARE URL ROUTES ==============
+
+@api_router.get("/share/certificate/{certificate_id}")
+async def get_share_data(certificate_id: str):
+    """Get shareable data for certificate"""
+    certificate = await db.user_certificates.find_one(
+        {"certificate_id": certificate_id},
+        {"_id": 0, "user_email": 0}
+    )
+    
+    if not certificate:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    
+    return {
+        "certificate": certificate,
+        "share_text": f"I just earned my {certificate['vendor']} {certificate['cert_name']} certification on SkillTrack365! 🎉 #{certificate['vendor']} #CloudCertification",
+        "twitter_url": f"https://twitter.com/intent/tweet?text={certificate['user_name']} earned {certificate['vendor']} {certificate['cert_name']} certification on SkillTrack365!",
+        "linkedin_url": f"https://www.linkedin.com/sharing/share-offsite/"
+    }
+
 @api_router.get("/")
 async def root():
     return {"message": "SkillTrack365 API", "version": "1.0.0"}
