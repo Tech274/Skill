@@ -14,12 +14,14 @@ import ActiveLab from "./pages/ActiveLab";
 import Assessments from "./pages/Assessments";
 import AssessmentTake from "./pages/AssessmentTake";
 import AssessmentResults from "./pages/AssessmentResults";
+import AssessmentReview from "./pages/AssessmentReview";
 import Projects from "./pages/Projects";
 import ProjectWorkspace from "./pages/ProjectWorkspace";
 import Dashboard from "./pages/Dashboard";
 import Checkout from "./pages/Checkout";
 import CheckoutSuccess from "./pages/CheckoutSuccess";
 import Profile from "./pages/Profile";
+import CertificateView from "./pages/CertificateView";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
