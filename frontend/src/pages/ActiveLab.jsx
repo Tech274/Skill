@@ -6,6 +6,7 @@ import { API, useAuth } from "../App";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
+import { Textarea } from "../components/ui/textarea";
 import {
   LuArrowLeft,
   LuClock,
@@ -13,7 +14,9 @@ import {
   LuCircle,
   LuTerminal,
   LuChevronRight,
-  LuX,
+  LuBookmark,
+  LuStickyNote,
+  LuSave,
 } from "react-icons/lu";
 
 export default function ActiveLab() {
@@ -26,6 +29,10 @@ export default function ActiveLab() {
   const [timeElapsed, setTimeElapsed] = useState(0);
   const [loading, setLoading] = useState(true);
   const [completing, setCompleting] = useState(false);
+  const [bookmarked, setBookmarked] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [showNotes, setShowNotes] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
   const [terminalOutput, setTerminalOutput] = useState([
     { type: "system", text: "Initializing cloud environment..." },
     { type: "system", text: "Connected to AWS Console (Simulated)" },
@@ -37,6 +44,7 @@ export default function ActiveLab() {
 
   useEffect(() => {
     fetchLab();
+    fetchBookmarkAndNotes();
     timerRef.current = setInterval(() => {
       setTimeElapsed((prev) => prev + 1);
     }, 1000);
@@ -61,6 +69,53 @@ export default function ActiveLab() {
       toast.error("Failed to load lab");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchBookmarkAndNotes = async () => {
+    try {
+      const [bookmarksRes, noteRes] = await Promise.all([
+        axios.get(`${API}/bookmarks`, { withCredentials: true }),
+        axios.get(`${API}/notes/${labId}`, { withCredentials: true }),
+      ]);
+      
+      const isBookmarked = bookmarksRes.data.some(b => b.lab_id === labId);
+      setBookmarked(isBookmarked);
+      setNotes(noteRes.data?.content || "");
+    } catch (error) {
+      console.error("Error fetching bookmark/notes:", error);
+    }
+  };
+
+  const handleToggleBookmark = async () => {
+    try {
+      await axios.post(
+        `${API}/bookmarks`,
+        { lab_id: labId, bookmarked: !bookmarked },
+        { withCredentials: true }
+      );
+      setBookmarked(!bookmarked);
+      toast.success(bookmarked ? "Bookmark removed" : "Lab bookmarked!");
+    } catch (error) {
+      console.error("Error toggling bookmark:", error);
+      toast.error("Failed to update bookmark");
+    }
+  };
+
+  const handleSaveNotes = async () => {
+    setSavingNotes(true);
+    try {
+      await axios.post(
+        `${API}/notes`,
+        { lab_id: labId, content: notes },
+        { withCredentials: true }
+      );
+      toast.success("Notes saved!");
+    } catch (error) {
+      console.error("Error saving notes:", error);
+      toast.error("Failed to save notes");
+    } finally {
+      setSavingNotes(false);
     }
   };
 
@@ -167,6 +222,30 @@ export default function ActiveLab() {
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Bookmark Button */}
+          <button
+            onClick={handleToggleBookmark}
+            className={`p-2 rounded-lg transition-colors ${
+              bookmarked ? "bg-amber-500/20 text-amber-400" : "hover:bg-white/5 text-zinc-400"
+            }`}
+            data-testid="bookmark-btn"
+            title={bookmarked ? "Remove bookmark" : "Bookmark this lab"}
+          >
+            <LuBookmark className={`w-5 h-5 ${bookmarked ? "fill-current" : ""}`} />
+          </button>
+
+          {/* Notes Button */}
+          <button
+            onClick={() => setShowNotes(!showNotes)}
+            className={`p-2 rounded-lg transition-colors ${
+              showNotes ? "bg-cyan-500/20 text-cyan-400" : "hover:bg-white/5 text-zinc-400"
+            }`}
+            data-testid="notes-btn"
+            title="Toggle notes"
+          >
+            <LuStickyNote className="w-5 h-5" />
+          </button>
+
           <div className="hidden md:flex items-center gap-2">
             <span className="text-sm text-zinc-500">Progress</span>
             <Progress value={progress} className="w-32 h-2" />
@@ -192,6 +271,35 @@ export default function ActiveLab() {
         {/* Left Panel - Instructions */}
         <div className="bg-zinc-900/30 border-r border-zinc-800 overflow-y-auto">
           <div className="p-6">
+            {/* Notes Section (Collapsible) */}
+            {showNotes && (
+              <div className="mb-6 bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-cyan-400 flex items-center gap-2">
+                    <LuStickyNote className="w-4 h-4" />
+                    Your Notes
+                  </h3>
+                  <Button
+                    onClick={handleSaveNotes}
+                    disabled={savingNotes}
+                    size="sm"
+                    className="bg-cyan-500 hover:bg-cyan-400 text-zinc-950"
+                    data-testid="save-notes-btn"
+                  >
+                    <LuSave className="w-4 h-4 mr-1" />
+                    {savingNotes ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+                <Textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Take notes about this lab..."
+                  className="min-h-[120px] bg-zinc-900/50 border-zinc-700 resize-none"
+                  data-testid="notes-textarea"
+                />
+              </div>
+            )}
+
             <h2 className="text-lg font-semibold mb-4">Lab Instructions</h2>
             
             <div className="space-y-4">
