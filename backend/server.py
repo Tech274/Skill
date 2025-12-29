@@ -148,6 +148,26 @@ class NoteRequest(BaseModel):
 class CertificateRequest(BaseModel):
     cert_id: str
 
+class DiscussionPostCreate(BaseModel):
+    cert_id: str
+    title: str
+    content: str
+
+class DiscussionReplyCreate(BaseModel):
+    post_id: str
+    content: str
+
+class VideoContentModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    video_id: str
+    cert_id: str
+    title: str
+    description: str
+    duration_minutes: int
+    youtube_url: str
+    thumbnail_url: Optional[str] = None
+    order: int = 0
+
 # ============== AUTH HELPERS ==============
 
 async def get_current_user(request: Request) -> Optional[Dict]:
