@@ -129,10 +129,12 @@ const AppRouter = () => {
       <Route path="/certification/:certId/assessments" element={<ProtectedRoute><Assessments /></ProtectedRoute>} />
       <Route path="/assessment/:assessmentId" element={<ProtectedRoute><AssessmentTake /></ProtectedRoute>} />
       <Route path="/assessment/:assessmentId/results" element={<ProtectedRoute><AssessmentResults /></ProtectedRoute>} />
+      <Route path="/assessment/:assessmentId/review" element={<ProtectedRoute><AssessmentReview /></ProtectedRoute>} />
       <Route path="/certification/:certId/projects" element={<ProtectedRoute><Projects /></ProtectedRoute>} />
       <Route path="/project/:projectId" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>} />
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/checkout" element={<ProtectedRoute><Checkout /></ProtectedRoute>} />
+      <Route path="/certificate/:certificateId" element={<CertificateView />} />
       <Route path="/checkout/success" element={<ProtectedRoute><CheckoutSuccess /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
     </Routes>
