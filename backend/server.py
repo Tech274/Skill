@@ -1341,6 +1341,371 @@ async def seed_data():
     
     return {"message": "Data seeded successfully", "certifications": len(certifications), "labs": len(labs), "assessments": len(assessments), "projects": len(projects)}
 
+# ============== LEADERBOARD ROUTES ==============
+
+XP_VALUES = {
+    "lab_completed": 100,
+    "assessment_passed": 150,
+    "project_completed": 200,
+    "certificate_earned": 500
+}
+
+@api_router.get("/leaderboard")
+async def get_leaderboard(limit: int = 20):
+    """Get top users by XP"""
+    # Calculate XP for all users with progress
+    pipeline = [
+        {
+            "$group": {
+                "_id": "$user_id",
+                "labs_count": {"$sum": {"$size": {"$ifNull": ["$labs_completed", []]}}},
+                "assessments_passed": {
+                    "$sum": {
+                        "$size": {
+                            "$filter": {
+                                "input": {"$ifNull": ["$assessments_completed", []]},
+                                "as": "a",
+                                "cond": {"$eq": ["$$a.passed", True]}
+                            }
+                        }
+                    }
+                },
+                "projects_count": {"$sum": {"$size": {"$ifNull": ["$projects_completed", []]}}}
+            }
+        }
+    ]
+    
+    progress_data = await db.user_progress.aggregate(pipeline).to_list(1000)
+    
+    # Get certificates count per user
+    cert_pipeline = [
+        {"$group": {"_id": "$user_id", "cert_count": {"$sum": 1}}}
+    ]
+    cert_data = await db.user_certificates.aggregate(cert_pipeline).to_list(1000)
+    cert_map = {c["_id"]: c["cert_count"] for c in cert_data}
+    
+    # Calculate XP and get user details
+    leaderboard = []
+    for p in progress_data:
+        user_id = p["_id"]
+        user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "name": 1, "picture": 1})
+        if not user:
+            continue
+            
+        xp = (
+            p["labs_count"] * XP_VALUES["lab_completed"] +
+            p["assessments_passed"] * XP_VALUES["assessment_passed"] +
+            p["projects_count"] * XP_VALUES["project_completed"] +
+            cert_map.get(user_id, 0) * XP_VALUES["certificate_earned"]
+        )
+        
+        leaderboard.append({
+            "user_id": user_id,
+            "name": user.get("name", "Anonymous"),
+            "picture": user.get("picture"),
+            "xp": xp,
+            "labs_completed": p["labs_count"],
+            "assessments_passed": p["assessments_passed"],
+            "projects_completed": p["projects_count"],
+            "certificates_earned": cert_map.get(user_id, 0)
+        })
+    
+    # Sort by XP and limit
+    leaderboard.sort(key=lambda x: x["xp"], reverse=True)
+    
+    # Add rank
+    for i, entry in enumerate(leaderboard[:limit]):
+        entry["rank"] = i + 1
+    
+    return leaderboard[:limit]
+
+@api_router.get("/leaderboard/me")
+async def get_my_rank(user: Dict = Depends(require_auth)):
+    """Get current user's rank and XP"""
+    # Get user's progress across all certifications
+    progress_list = await db.user_progress.find(
+        {"user_id": user["user_id"]},
+        {"_id": 0}
+    ).to_list(100)
+    
+    labs_count = sum(len(p.get("labs_completed", [])) for p in progress_list)
+    assessments_passed = sum(
+        len([a for a in p.get("assessments_completed", []) if a.get("passed")])
+        for p in progress_list
+    )
+    projects_count = sum(len(p.get("projects_completed", [])) for p in progress_list)
+    
+    # Get certificates count
+    certs = await db.user_certificates.count_documents({"user_id": user["user_id"]})
+    
+    xp = (
+        labs_count * XP_VALUES["lab_completed"] +
+        assessments_passed * XP_VALUES["assessment_passed"] +
+        projects_count * XP_VALUES["project_completed"] +
+        certs * XP_VALUES["certificate_earned"]
+    )
+    
+    # Calculate rank
+    all_leaderboard = await get_leaderboard(limit=1000)
+    rank = next((i + 1 for i, entry in enumerate(all_leaderboard) if entry["user_id"] == user["user_id"]), len(all_leaderboard) + 1)
+    
+    return {
+        "user_id": user["user_id"],
+        "name": user["name"],
+        "picture": user.get("picture"),
+        "xp": xp,
+        "rank": rank,
+        "labs_completed": labs_count,
+        "assessments_passed": assessments_passed,
+        "projects_completed": projects_count,
+        "certificates_earned": certs
+    }
+
+# ============== DISCUSSION FORUM ROUTES ==============
+
+@api_router.get("/discussions/{cert_id}")
+async def get_discussions(cert_id: str, page: int = 1, limit: int = 20):
+    """Get discussion posts for a certification"""
+    skip = (page - 1) * limit
+    
+    posts = await db.discussion_posts.find(
+        {"cert_id": cert_id},
+        {"_id": 0}
+    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Get reply counts
+    for post in posts:
+        reply_count = await db.discussion_replies.count_documents({"post_id": post["post_id"]})
+        post["reply_count"] = reply_count
+    
+    total = await db.discussion_posts.count_documents({"cert_id": cert_id})
+    
+    return {
+        "posts": posts,
+        "total": total,
+        "page": page,
+        "pages": (total + limit - 1) // limit
+    }
+
+@api_router.get("/discussions/post/{post_id}")
+async def get_discussion_post(post_id: str):
+    """Get a single discussion post with replies"""
+    post = await db.discussion_posts.find_one({"post_id": post_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    replies = await db.discussion_replies.find(
+        {"post_id": post_id},
+        {"_id": 0}
+    ).sort("created_at", 1).to_list(100)
+    
+    return {
+        "post": post,
+        "replies": replies
+    }
+
+@api_router.post("/discussions")
+async def create_discussion_post(data: DiscussionPostCreate, user: Dict = Depends(require_auth)):
+    """Create a new discussion post"""
+    post = {
+        "post_id": f"post_{uuid.uuid4().hex[:12]}",
+        "cert_id": data.cert_id,
+        "user_id": user["user_id"],
+        "user_name": user["name"],
+        "user_picture": user.get("picture"),
+        "title": data.title,
+        "content": data.content,
+        "likes": 0,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.discussion_posts.insert_one(post)
+    post.pop("_id", None)
+    return post
+
+@api_router.post("/discussions/reply")
+async def create_discussion_reply(data: DiscussionReplyCreate, user: Dict = Depends(require_auth)):
+    """Create a reply to a discussion post"""
+    # Verify post exists
+    post = await db.discussion_posts.find_one({"post_id": data.post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    reply = {
+        "reply_id": f"reply_{uuid.uuid4().hex[:12]}",
+        "post_id": data.post_id,
+        "user_id": user["user_id"],
+        "user_name": user["name"],
+        "user_picture": user.get("picture"),
+        "content": data.content,
+        "likes": 0,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.discussion_replies.insert_one(reply)
+    reply.pop("_id", None)
+    return reply
+
+@api_router.post("/discussions/{post_id}/like")
+async def like_discussion_post(post_id: str, user: Dict = Depends(require_auth)):
+    """Like a discussion post"""
+    result = await db.discussion_posts.update_one(
+        {"post_id": post_id},
+        {"$inc": {"likes": 1}}
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return {"success": True}
+
+# ============== VIDEO CONTENT ROUTES ==============
+
+@api_router.get("/videos/{cert_id}")
+async def get_videos(cert_id: str):
+    """Get video content for a certification"""
+    videos = await db.videos.find(
+        {"cert_id": cert_id},
+        {"_id": 0}
+    ).sort("order", 1).to_list(100)
+    return videos
+
+@api_router.get("/videos/watch/{video_id}")
+async def get_video(video_id: str):
+    """Get a single video"""
+    video = await db.videos.find_one({"video_id": video_id}, {"_id": 0})
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
+@api_router.post("/videos/{video_id}/complete")
+async def mark_video_complete(video_id: str, user: Dict = Depends(require_auth)):
+    """Mark a video as watched"""
+    video = await db.videos.find_one({"video_id": video_id}, {"_id": 0})
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    # Add to user's watched videos
+    await db.user_videos.update_one(
+        {"user_id": user["user_id"], "video_id": video_id},
+        {
+            "$set": {
+                "watched_at": datetime.now(timezone.utc).isoformat()
+            },
+            "$setOnInsert": {
+                "user_id": user["user_id"],
+                "video_id": video_id,
+                "cert_id": video["cert_id"]
+            }
+        },
+        upsert=True
+    )
+    return {"success": True}
+
+@api_router.get("/videos/{cert_id}/progress")
+async def get_video_progress(cert_id: str, user: Dict = Depends(require_auth)):
+    """Get user's video progress for a certification"""
+    watched = await db.user_videos.find(
+        {"user_id": user["user_id"], "cert_id": cert_id},
+        {"_id": 0, "video_id": 1}
+    ).to_list(100)
+    
+    total = await db.videos.count_documents({"cert_id": cert_id})
+    watched_count = len(watched)
+    
+    return {
+        "watched_videos": [w["video_id"] for w in watched],
+        "watched_count": watched_count,
+        "total_count": total,
+        "progress_percentage": int((watched_count / total) * 100) if total > 0 else 0
+    }
+
+# ============== SEED VIDEO DATA ==============
+
+@api_router.post("/seed-videos")
+async def seed_video_data():
+    """Seed video content for certifications"""
+    existing = await db.videos.find_one({})
+    if existing:
+        return {"message": "Videos already seeded"}
+    
+    videos = [
+        # AWS SAA Videos
+        {
+            "video_id": "vid-aws-saa-1",
+            "cert_id": "aws-saa-c03",
+            "title": "Introduction to AWS Solutions Architecture",
+            "description": "Learn the fundamentals of designing solutions on AWS, including key services and architectural best practices.",
+            "duration_minutes": 15,
+            "youtube_url": "https://www.youtube.com/embed/Ia-UEYYR44s",
+            "thumbnail_url": "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=400",
+            "order": 1
+        },
+        {
+            "video_id": "vid-aws-saa-2",
+            "cert_id": "aws-saa-c03",
+            "title": "AWS VPC Deep Dive",
+            "description": "Master Virtual Private Cloud concepts including subnets, route tables, and security groups.",
+            "duration_minutes": 20,
+            "youtube_url": "https://www.youtube.com/embed/hiKPPy584Mg",
+            "thumbnail_url": "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=400",
+            "order": 2
+        },
+        {
+            "video_id": "vid-aws-saa-3",
+            "cert_id": "aws-saa-c03",
+            "title": "EC2 Instance Types and Use Cases",
+            "description": "Understanding EC2 instance families and choosing the right instance for your workload.",
+            "duration_minutes": 18,
+            "youtube_url": "https://www.youtube.com/embed/iHX-jtKIVNA",
+            "thumbnail_url": "https://images.unsplash.com/photo-1544197150-b99a580bb7a8?w=400",
+            "order": 3
+        },
+        # Azure AZ-900 Videos
+        {
+            "video_id": "vid-az-900-1",
+            "cert_id": "az-900",
+            "title": "Azure Fundamentals Overview",
+            "description": "Introduction to cloud computing concepts and Azure's core services.",
+            "duration_minutes": 12,
+            "youtube_url": "https://www.youtube.com/embed/NKEFWyqJ5XA",
+            "thumbnail_url": "https://images.unsplash.com/photo-1526498460520-4c246339dccb?w=400",
+            "order": 1
+        },
+        {
+            "video_id": "vid-az-900-2",
+            "cert_id": "az-900",
+            "title": "Azure Resource Management",
+            "description": "Learn about resource groups, subscriptions, and management groups in Azure.",
+            "duration_minutes": 14,
+            "youtube_url": "https://www.youtube.com/embed/gIyvkFahKqQ",
+            "thumbnail_url": "https://images.unsplash.com/photo-1535191042502-e6a9a3d407e7?w=400",
+            "order": 2
+        },
+        # GCP ACE Videos
+        {
+            "video_id": "vid-gcp-ace-1",
+            "cert_id": "gcp-ace",
+            "title": "Getting Started with Google Cloud",
+            "description": "Introduction to GCP console, projects, and core services.",
+            "duration_minutes": 16,
+            "youtube_url": "https://www.youtube.com/embed/IeMYQ-qJeK4",
+            "thumbnail_url": "https://images.unsplash.com/photo-1544197150-b99a580bb7a8?w=400",
+            "order": 1
+        },
+        {
+            "video_id": "vid-gcp-ace-2",
+            "cert_id": "gcp-ace",
+            "title": "GCP Compute Engine Basics",
+            "description": "Learn to create and manage virtual machines on Google Cloud Platform.",
+            "duration_minutes": 19,
+            "youtube_url": "https://www.youtube.com/embed/1XH0gLlGDdk",
+            "thumbnail_url": "https://images.unsplash.com/photo-1618477388954-7852f32655ec?w=400",
+            "order": 2
+        }
+    ]
+    
+    await db.videos.insert_many(videos)
+    return {"message": "Videos seeded successfully", "count": len(videos)}
+
 # ============== ROOT ENDPOINT ==============
 
 # ============== BOOKMARKS & NOTES ROUTES ==============
