@@ -136,6 +136,10 @@ const AppRouter = () => {
       <Route path="/assessment/:assessmentId/review" element={<ProtectedRoute><AssessmentReview /></ProtectedRoute>} />
       <Route path="/certification/:certId/projects" element={<ProtectedRoute><Projects /></ProtectedRoute>} />
       <Route path="/project/:projectId" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>} />
+      <Route path="/certification/:certId/videos" element={<ProtectedRoute><Videos /></ProtectedRoute>} />
+      <Route path="/certification/:certId/discussions" element={<ProtectedRoute><Discussions /></ProtectedRoute>} />
+      <Route path="/discussions/post/:postId" element={<ProtectedRoute><DiscussionPost /></ProtectedRoute>} />
+      <Route path="/leaderboard" element={<ProtectedRoute><Leaderboard /></ProtectedRoute>} />
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/checkout" element={<ProtectedRoute><Checkout /></ProtectedRoute>} />
       <Route path="/certificate/:certificateId" element={<CertificateView />} />
