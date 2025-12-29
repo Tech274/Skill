@@ -128,6 +128,17 @@ class CheckoutRequest(BaseModel):
     plan: str
     origin_url: str
 
+class BookmarkRequest(BaseModel):
+    lab_id: str
+    bookmarked: bool
+
+class NoteRequest(BaseModel):
+    lab_id: str
+    content: str
+
+class CertificateRequest(BaseModel):
+    cert_id: str
+
 # ============== AUTH HELPERS ==============
 
 async def get_current_user(request: Request) -> Optional[Dict]:
