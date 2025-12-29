@@ -10,7 +10,7 @@ import {
   LuArrowRight,
   LuArrowLeft,
   LuClock,
-  LuCheckCircle,
+  LuCircleCheck,
   LuCircle,
 } from "react-icons/lu";
 
@@ -90,7 +90,7 @@ export default function CloudLabs() {
                 <div className="flex items-center gap-4 shrink-0">
                   <div className="w-12 h-12 bg-zinc-800 rounded-xl flex items-center justify-center">
                     {lab.status === "completed" ? (
-                      <LuCheckCircle className="w-6 h-6 text-emerald-400" />
+                      <LuCircleCheck className="w-6 h-6 text-emerald-400" />
                     ) : (
                       <span className="text-lg font-bold text-zinc-500">{index + 1}</span>
                     )}

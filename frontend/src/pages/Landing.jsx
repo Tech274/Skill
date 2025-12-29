@@ -9,7 +9,7 @@ import {
   LuGraduationCap,
   LuTrophy,
   LuTarget,
-  LuCheckCircle,
+  LuCircleCheck,
   LuZap,
 } from "react-icons/lu";
 import { FaAws } from "react-icons/fa";
@@ -214,15 +214,15 @@ export default function Landing() {
                 </div>
                 <div className="space-y-2 text-sm text-zinc-400">
                   <div className="flex items-center gap-2">
-                    <LuCheckCircle className="w-4 h-4 text-emerald-400" />
+                    <LuCircleCheck className="w-4 h-4 text-emerald-400" />
                     <span>Hands-on Labs</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <LuCheckCircle className="w-4 h-4 text-emerald-400" />
+                    <LuCircleCheck className="w-4 h-4 text-emerald-400" />
                     <span>Practice Exams</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <LuCheckCircle className="w-4 h-4 text-emerald-400" />
+                    <LuCircleCheck className="w-4 h-4 text-emerald-400" />
                     <span>Real Projects</span>
                   </div>
                 </div>

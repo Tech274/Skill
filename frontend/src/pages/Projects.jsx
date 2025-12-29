@@ -9,7 +9,7 @@ import { Badge } from "../components/ui/badge";
 import {
   LuArrowRight,
   LuArrowLeft,
-  LuCheckCircle,
+  LuCircleCheck,
   LuCircle,
   LuCode,
 } from "react-icons/lu";
@@ -90,7 +90,7 @@ export default function Projects() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-2">
                     {project.status === "completed" ? (
-                      <LuCheckCircle className="w-5 h-5 text-emerald-400" />
+                      <LuCircleCheck className="w-5 h-5 text-emerald-400" />
                     ) : (
                       <LuCode className="w-5 h-5 text-cyan-400" />
                     )}

@@ -9,7 +9,7 @@ import { Progress } from "../components/ui/progress";
 import {
   LuArrowLeft,
   LuClock,
-  LuCheckCircle,
+  LuCircleCheck,
   LuCircle,
   LuTerminal,
   LuChevronRight,
@@ -217,7 +217,7 @@ export default function ActiveLab() {
                         isCompleted ? "bg-emerald-500" : isCurrent ? "bg-cyan-500" : "bg-zinc-700"
                       }`}>
                         {isCompleted ? (
-                          <LuCheckCircle className="w-4 h-4 text-white" />
+                          <LuCircleCheck className="w-4 h-4 text-white" />
                         ) : (
                           <span className="text-sm font-bold text-white">{instruction.step}</span>
                         )}

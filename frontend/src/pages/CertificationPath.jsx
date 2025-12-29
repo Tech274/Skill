@@ -16,7 +16,7 @@ import {
   LuFolderKanban,
   LuTarget,
   LuClock,
-  LuCheckCircle,
+  LuCircleCheck,
   LuCircle,
 } from "react-icons/lu";
 import { FaAws } from "react-icons/fa";
@@ -212,7 +212,7 @@ export default function CertificationPath() {
                       key={role}
                       className="flex items-center gap-3 p-3 bg-zinc-800/50 rounded-lg"
                     >
-                      <LuCheckCircle className="w-5 h-5 text-emerald-400" />
+                      <LuCircleCheck className="w-5 h-5 text-emerald-400" />
                       <span>{role}</span>
                     </div>
                   ))}
@@ -263,7 +263,7 @@ export default function CertificationPath() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       {lab.status === "completed" ? (
-                        <LuCheckCircle className="w-5 h-5 text-emerald-400" />
+                        <LuCircleCheck className="w-5 h-5 text-emerald-400" />
                       ) : (
                         <LuCircle className="w-5 h-5 text-zinc-600" />
                       )}
@@ -305,7 +305,7 @@ export default function CertificationPath() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       {assessment.status === "completed" ? (
-                        <LuCheckCircle className="w-5 h-5 text-emerald-400" />
+                        <LuCircleCheck className="w-5 h-5 text-emerald-400" />
                       ) : (
                         <LuCircle className="w-5 h-5 text-zinc-600" />
                       )}
@@ -350,7 +350,7 @@ export default function CertificationPath() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       {project.status === "completed" ? (
-                        <LuCheckCircle className="w-5 h-5 text-emerald-400" />
+                        <LuCircleCheck className="w-5 h-5 text-emerald-400" />
                       ) : (
                         <LuCircle className="w-5 h-5 text-zinc-600" />
                       )}

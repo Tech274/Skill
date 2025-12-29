@@ -9,7 +9,7 @@ import { Badge } from "../components/ui/badge";
 import {
   LuArrowLeft,
   LuClock,
-  LuCheckCircle,
+  LuCircleCheck,
   LuTarget,
   LuBookOpen,
   LuPlay,
@@ -90,7 +90,7 @@ export default function LabDetail() {
           <ul className="space-y-3">
             {lab.instructions?.map((instruction, index) => (
               <li key={index} className="flex items-start gap-3">
-                <LuCheckCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <LuCircleCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
                 <span className="text-zinc-300">{instruction.title}</span>
               </li>
             ))}

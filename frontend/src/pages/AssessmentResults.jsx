@@ -4,8 +4,8 @@ import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
 import {
-  LuCheckCircle,
-  LuXCircle,
+  LuCircleCheck,
+  LuCircleX,
   LuArrowRight,
   LuTrendingUp,
   LuTarget,
@@ -45,9 +45,9 @@ export default function AssessmentResults() {
             passed ? "bg-emerald-500/20" : "bg-rose-500/20"
           }`}>
             {passed ? (
-              <LuCheckCircle className="w-10 h-10 text-emerald-400" />
+              <LuCircleCheck className="w-10 h-10 text-emerald-400" />
             ) : (
-              <LuXCircle className="w-10 h-10 text-rose-400" />
+              <LuCircleX className="w-10 h-10 text-rose-400" />
             )}
           </div>
           

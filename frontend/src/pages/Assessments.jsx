@@ -10,7 +10,7 @@ import {
   LuArrowRight,
   LuArrowLeft,
   LuClock,
-  LuCheckCircle,
+  LuCircleCheck,
   LuCircle,
   LuTarget,
 } from "react-icons/lu";
@@ -91,7 +91,7 @@ export default function Assessments() {
               >
                 <div className="flex items-start gap-3 mb-3">
                   {assessment.status === "completed" ? (
-                    <LuCheckCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                    <LuCircleCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
                   ) : (
                     <LuCircle className="w-5 h-5 text-zinc-600 shrink-0 mt-0.5" />
                   )}
@@ -151,7 +151,7 @@ export default function Assessments() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
                       {assessment.status === "completed" ? (
-                        <LuCheckCircle className="w-5 h-5 text-emerald-400" />
+                        <LuCircleCheck className="w-5 h-5 text-emerald-400" />
                       ) : (
                         <LuCircle className="w-5 h-5 text-zinc-600" />
                       )}

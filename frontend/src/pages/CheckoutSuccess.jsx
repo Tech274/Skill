@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { API, useAuth } from "../App";
 import Layout from "../components/Layout";
 import { Button } from "../components/ui/button";
-import { LuCheckCircle, LuLoader2, LuXCircle } from "react-icons/lu";
+import { LuCircleCheck, LuLoader2, LuCircleX } from "react-icons/lu";
 
 export default function CheckoutSuccess() {
   const [searchParams] = useSearchParams();
@@ -78,7 +78,7 @@ export default function CheckoutSuccess() {
         {status === "success" && (
           <>
             <div className="w-20 h-20 bg-emerald-500/20 rounded-full mx-auto mb-6 flex items-center justify-center">
-              <LuCheckCircle className="w-10 h-10 text-emerald-400" />
+              <LuCircleCheck className="w-10 h-10 text-emerald-400" />
             </div>
             <h1 className="text-2xl font-bold mb-4">Payment Successful!</h1>
             <p className="text-zinc-400 mb-8">
@@ -116,7 +116,7 @@ export default function CheckoutSuccess() {
         {status === "error" && (
           <>
             <div className="w-20 h-20 bg-rose-500/20 rounded-full mx-auto mb-6 flex items-center justify-center">
-              <LuXCircle className="w-10 h-10 text-rose-400" />
+              <LuCircleX className="w-10 h-10 text-rose-400" />
             </div>
             <h1 className="text-2xl font-bold mb-4">Payment Failed</h1>
             <p className="text-zinc-400 mb-8">

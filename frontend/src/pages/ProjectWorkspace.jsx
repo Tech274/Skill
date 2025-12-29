@@ -8,7 +8,7 @@ import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
 import {
   LuArrowLeft,
-  LuCheckCircle,
+  LuCircleCheck,
   LuCircle,
   LuTerminal,
   LuFileText,
@@ -205,7 +205,7 @@ export default function ProjectWorkspace() {
                           isCompleted ? "bg-emerald-500" : "bg-zinc-700"
                         }`}>
                           {isCompleted ? (
-                            <LuCheckCircle className="w-4 h-4 text-white" />
+                            <LuCircleCheck className="w-4 h-4 text-white" />
                           ) : (
                             <span className="text-xs font-bold text-white">{task.id}</span>
                           )}
