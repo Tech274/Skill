@@ -1,0 +1,131 @@
+{
+  "design_system": {
+    "identity": {
+      "name": "CertPro + Skilltrack365",
+      "persona": "E1: The Anti-AI Designer",
+      "vibe": "Electric Control Room",
+      "description": "A high-contrast, dark-mode-first learning environment that feels like a professional cloud console, not a classroom. Dense, data-rich, and focused."
+    },
+    "typography": {
+      "fonts": {
+        "heading": "Manrope",
+        "body": "Manrope",
+        "code": "JetBrains Mono"
+      },
+      "weights": {
+        "heading": "font-bold",
+        "body": "font-medium",
+        "code": "font-regular"
+      },
+      "scaling": {
+        "h1": "text-4xl md:text-6xl tracking-tight",
+        "h2": "text-3xl md:text-4xl tracking-tight",
+        "h3": "text-xl md:text-2xl font-semibold",
+        "body": "text-base leading-relaxed text-muted-foreground",
+        "small": "text-sm font-medium text-muted-foreground/80"
+      }
+    },
+    "colors": {
+      "palette": {
+        "background": "bg-zinc-950",
+        "foreground": "text-zinc-50",
+        "card": "bg-zinc-900/50",
+        "border": "border-zinc-800",
+        "primary": "bg-cyan-500 hover:bg-cyan-400 text-zinc-950",
+        "secondary": "bg-indigo-600 hover:bg-indigo-500 text-white",
+        "accent": "text-cyan-400",
+        "muted": "bg-zinc-900 text-zinc-400",
+        "success": "text-emerald-400",
+        "warning": "text-amber-400",
+        "error": "text-rose-400"
+      },
+      "gradients": {
+        "hero": "bg-gradient-to-b from-zinc-950 via-zinc-900 to-zinc-950",
+        "glow": "shadow-[0_0_20px_rgba(34,211,238,0.15)]",
+        "glass": "backdrop-blur-xl bg-zinc-950/70 border border-white/10"
+      }
+    },
+    "layout": {
+      "spacing": {
+        "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+        "section": "py-24 md:py-32",
+        "card_padding": "p-6 md:p-8"
+      },
+      "grids": {
+        "dashboard": "grid grid-cols-1 md:grid-cols-12 gap-6",
+        "landing": "grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12",
+        "cards": "grid grid-cols-1 md:grid-cols-3 gap-6"
+      },
+      "radius": {
+        "default": "rounded-xl",
+        "button": "rounded-lg",
+        "card": "rounded-xl"
+      }
+    },
+    "visual_enhancers": {
+      "borders": "border border-white/5",
+      "shadows": "shadow-2xl shadow-black/50",
+      "textures": "bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20",
+      "animations": {
+        "hover": "transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-lg",
+        "fade_in": "animate-in fade-in duration-500 slide-in-from-bottom-4"
+      }
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-cyan-500 text-zinc-950 hover:bg-cyan-400 font-bold px-6 py-3 rounded-lg shadow-[0_0_15px_rgba(6,182,212,0.3)] transition-all",
+      "secondary": "bg-zinc-800 text-white hover:bg-zinc-700 font-medium px-6 py-3 rounded-lg border border-zinc-700",
+      "ghost": "text-zinc-400 hover:text-white hover:bg-white/5 px-4 py-2 rounded-lg"
+    },
+    "cards": {
+      "feature": "bg-zinc-900/40 border border-white/5 p-8 rounded-2xl hover:border-cyan-500/30 transition-colors group relative overflow-hidden",
+      "dashboard": "bg-zinc-900 border border-zinc-800 p-6 rounded-xl shadow-sm",
+      "lab": "bg-zinc-950 border border-zinc-800 hover:border-zinc-700 transition-all p-0 rounded-xl overflow-hidden flex flex-col"
+    },
+    "inputs": {
+      "default": "bg-zinc-950/50 border-zinc-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 rounded-lg h-11"
+    }
+  },
+  "assets": {
+    "images": {
+      "hero_bg": "https://images.unsplash.com/photo-1548544027-1a96c4c24c7a?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "coding_human": "https://images.unsplash.com/photo-1684488624316-774ea1824d97?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "server_texture": "https://images.unsplash.com/photo-1569660424259-87e64a80f6fc?crop=entropy&cs=srgb&fm=jpg&q=85"
+    },
+    "icons": {
+      "library": "react-icons",
+      "sets": ["SiAws", "SiMicrosoftazure", "SiGooglecloud", "LuLayoutDashboard", "LuTerminal", "LuTrophy", "LuUser"]
+    }
+  },
+  "pages": {
+    "landing": {
+      "structure": "Hero (Split), Features (Bento Grid), Certification Paths (Cards), Testimonials, CTA",
+      "key_elements": "3D Spline element or large typography for 'Certification-First'. Dark mode mandatory."
+    },
+    "dashboard": {
+      "structure": "Sidebar Nav, Top Stats Row, Active Lab Card (Large), Recent Activity (List), Weak Areas (Chart)",
+      "style": "Dense, data-heavy, 'Control Room' aesthetic."
+    },
+    "lab_active": {
+      "structure": "Split Screen: Left (Instructions/Steps - 30%), Right (Console/Terminal - 70%)",
+      "features": "Floating timer, 'Check Status' button (Neon), Terminal window with monospace font."
+    }
+  },
+  "instructions_to_main_agent": [
+    "1. INSTALL DEPENDENCIES: `yarn add react-icons framer-motion clsx tailwind-merge` immediately.",
+    "2. FONT SETUP: Add '@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;700;800&display=swap');' to index.css.",
+    "3. THEME ENFORCEMENT: Force dark mode by adding 'dark' class to the html/body tag in index.html or App.js. Do not build a light mode toggle unless requested.",
+    "4. GLASSMORPHISM: Use the 'glass' utility defined in colors.gradients for all sticky headers and overlays.",
+    "5. SPLIT SCREEN: For the 'Active Lab' page, use `h-[calc(100vh-4rem)]` to ensure the split screen takes full available height without scrolling the window.",
+    "6. LOGOS: Use `react-icons/si` for AWS (SiAmazonaws), Azure (SiMicrosoftazure), and GCP (SiGooglecloud). Do not use images for these logos.",
+    "7. CHARTS: Use `recharts` for the 'Skilltrack Dashboard' readiness metrics. Style them with the defined palette colors (Cyan/Indigo)."
+  ],
+  "universal_guidelines": [
+    "Avoid 'AI Slop': Do not use generic gradients or centered text everywhere.",
+    "Use 'JetBrains Mono' for all code snippets, terminal outputs, and technical data values.",
+    "Ensure all interactive elements have `data-testid` attributes.",
+    "Use `sonner` for all toast notifications.",
+    "Prioritize 'Manrope' for UI text - it is modern and readable."
+  ]
+}
