@@ -206,8 +206,8 @@ class SkillTrack365APITester:
             # Test with first certification
             cert_id = certifications[0]['cert_id']
             self.test_get_certification_detail(cert_id)
-            self.test_get_labs(cert_id)
-            self.test_get_assessments(cert_id)
+            success_labs, labs = self.test_get_labs(cert_id)
+            success_assessments, assessments = self.test_get_assessments(cert_id)
             self.test_get_projects(cert_id)
         
         # Test auth protection
