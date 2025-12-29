@@ -13,6 +13,7 @@ import {
   LuTarget,
   LuBookOpen,
   LuPlay,
+  LuBookmark,
 } from "react-icons/lu";
 
 export default function LabDetail() {
@@ -20,9 +21,11 @@ export default function LabDetail() {
   const navigate = useNavigate();
   const [lab, setLab] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [bookmarked, setBookmarked] = useState(false);
 
   useEffect(() => {
     fetchLab();
+    fetchBookmark();
   }, [labId]);
 
   const fetchLab = async () => {
@@ -34,6 +37,31 @@ export default function LabDetail() {
       toast.error("Failed to load lab details");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchBookmark = async () => {
+    try {
+      const response = await axios.get(`${API}/bookmarks`, { withCredentials: true });
+      const isBookmarked = response.data.some(b => b.lab_id === labId);
+      setBookmarked(isBookmarked);
+    } catch (error) {
+      console.error("Error fetching bookmark:", error);
+    }
+  };
+
+  const handleToggleBookmark = async () => {
+    try {
+      await axios.post(
+        `${API}/bookmarks`,
+        { lab_id: labId, bookmarked: !bookmarked },
+        { withCredentials: true }
+      );
+      setBookmarked(!bookmarked);
+      toast.success(bookmarked ? "Bookmark removed" : "Lab bookmarked!");
+    } catch (error) {
+      console.error("Error toggling bookmark:", error);
+      toast.error("Failed to update bookmark");
     }
   };
 
@@ -62,9 +90,21 @@ export default function LabDetail() {
 
         {/* Lab Header */}
         <div className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-6 mb-6">
-          <div className="flex items-center gap-2 mb-2">
-            <Badge className="bg-cyan-500/20 text-cyan-400">{lab.difficulty}</Badge>
-            <Badge variant="outline">{lab.exam_domain}</Badge>
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-2 mb-2">
+              <Badge className="bg-cyan-500/20 text-cyan-400">{lab.difficulty}</Badge>
+              <Badge variant="outline">{lab.exam_domain}</Badge>
+            </div>
+            <button
+              onClick={handleToggleBookmark}
+              className={`p-2 rounded-lg transition-colors ${
+                bookmarked ? "bg-amber-500/20 text-amber-400" : "hover:bg-white/5 text-zinc-400"
+              }`}
+              data-testid="bookmark-btn"
+              title={bookmarked ? "Remove bookmark" : "Bookmark this lab"}
+            >
+              <LuBookmark className={`w-5 h-5 ${bookmarked ? "fill-current" : ""}`} />
+            </button>
           </div>
           <h1 className="text-2xl md:text-3xl font-bold mb-3">{lab.title}</h1>
           <p className="text-zinc-400 mb-4">{lab.description}</p>
