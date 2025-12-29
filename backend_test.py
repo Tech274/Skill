@@ -214,7 +214,7 @@ class SkillTrack365APITester:
         self.test_auth_endpoints_without_auth()
         
         # Test new feature endpoints
-        if success and assessments:
+        if success and success_assessments and assessments:
             assessment_id = assessments[0]['assessment_id']
             self.test_assessment_review_endpoint(assessment_id)
         
