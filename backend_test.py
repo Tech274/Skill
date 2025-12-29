@@ -213,6 +213,13 @@ class SkillTrack365APITester:
         # Test auth protection
         self.test_auth_endpoints_without_auth()
         
+        # Test new feature endpoints
+        if success and assessments:
+            assessment_id = assessments[0]['assessment_id']
+            self.test_assessment_review_endpoint(assessment_id)
+        
+        self.test_certificate_download_endpoint()
+        
         return self.get_summary()
 
     def get_summary(self):
