@@ -15,6 +15,8 @@ import {
   LuFileText,
   LuFolderKanban,
   LuCrown,
+  LuExternalLink,
+  LuLoaderCircle,
 } from "react-icons/lu";
 import { FaAws } from "react-icons/fa";
 import { VscAzure } from "react-icons/vsc";
@@ -38,18 +40,25 @@ export default function Profile() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [dashboardData, setDashboardData] = useState(null);
+  const [certificates, setCertificates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [generatingCert, setGeneratingCert] = useState(null);
+  const [downloadingCert, setDownloadingCert] = useState(null);
 
   useEffect(() => {
-    fetchDashboard();
+    fetchData();
   }, []);
 
-  const fetchDashboard = async () => {
+  const fetchData = async () => {
     try {
-      const response = await axios.get(`${API}/dashboard`, { withCredentials: true });
-      setDashboardData(response.data);
+      const [dashboardRes, certsRes] = await Promise.all([
+        axios.get(`${API}/dashboard`, { withCredentials: true }),
+        axios.get(`${API}/certificates`, { withCredentials: true }),
+      ]);
+      setDashboardData(dashboardRes.data);
+      setCertificates(certsRes.data);
     } catch (error) {
-      console.error("Error fetching dashboard:", error);
+      console.error("Error fetching data:", error);
     } finally {
       setLoading(false);
     }
@@ -65,9 +74,63 @@ export default function Profile() {
     return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
   };
 
+  const handleGenerateCertificate = async (certId) => {
+    setGeneratingCert(certId);
+    try {
+      const response = await axios.post(
+        `${API}/certificates/generate`,
+        { cert_id: certId },
+        { withCredentials: true }
+      );
+      setCertificates([...certificates, response.data]);
+      toast.success("Certificate generated!");
+    } catch (error) {
+      console.error("Error generating certificate:", error);
+      toast.error(error.response?.data?.detail || "Failed to generate certificate");
+    } finally {
+      setGeneratingCert(null);
+    }
+  };
+
+  const handleDownloadCertificate = async (certificateId, certCode) => {
+    setDownloadingCert(certificateId);
+    try {
+      const response = await axios.get(
+        `${API}/certificates/${certificateId}/download`,
+        { 
+          withCredentials: true,
+          responseType: 'blob'
+        }
+      );
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `SkillTrack365_${certCode}_${certificateId}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      toast.success("Certificate downloaded!");
+    } catch (error) {
+      console.error("Error downloading:", error);
+      toast.error("Failed to download certificate");
+    } finally {
+      setDownloadingCert(null);
+    }
+  };
+
+  const handleViewCertificate = (certificateId) => {
+    navigate(`/certificate/${certificateId}`);
+  };
+
   const stats = dashboardData?.stats || {};
   const certifications = dashboardData?.certifications || [];
-  const completedCerts = certifications.filter((c) => c.readiness_percentage >= 80);
+  const eligibleCerts = certifications.filter((c) => c.readiness_percentage >= 80);
+  
+  // Map certificates to cert_ids for quick lookup
+  const earnedCertIds = new Set(certificates.map(c => c.cert_id));
 
   if (loading) {
     return (
@@ -143,7 +206,7 @@ export default function Profile() {
           </div>
           <div className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4 text-center">
             <LuAward className="w-6 h-6 text-amber-400 mx-auto mb-2" />
-            <div className="text-2xl font-bold">{completedCerts.length}</div>
+            <div className="text-2xl font-bold">{certificates.length}</div>
             <div className="text-sm text-zinc-500">Certificates</div>
           </div>
         </div>
@@ -155,15 +218,15 @@ export default function Profile() {
             Earned Certificates
           </h2>
           
-          {completedCerts.length > 0 ? (
+          {certificates.length > 0 ? (
             <div className="grid md:grid-cols-2 gap-4">
-              {completedCerts.map((cert) => {
+              {certificates.map((cert) => {
                 const VendorIcon = vendorIcons[cert.vendor] || LuTerminal;
                 const vendorColor = vendorColors[cert.vendor] || "#22C55E";
                 
                 return (
                   <div
-                    key={cert.cert_id}
+                    key={cert.certificate_id}
                     className="bg-gradient-to-br from-amber-500/10 to-zinc-900/50 border border-amber-500/20 rounded-xl p-4"
                   >
                     <div className="flex items-center gap-3 mb-3">
@@ -175,7 +238,7 @@ export default function Profile() {
                       </div>
                       <div>
                         <h3 className="font-semibold">{cert.cert_name}</h3>
-                        <p className="text-xs text-zinc-500">{cert.vendor}</p>
+                        <p className="text-xs text-zinc-500">{cert.vendor} • {cert.cert_code}</p>
                       </div>
                     </div>
                     
@@ -184,14 +247,77 @@ export default function Profile() {
                         {cert.readiness_percentage}% Ready
                       </Badge>
                       <div className="flex gap-2">
-                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
-                          <LuDownload className="w-4 h-4" />
+                        <Button 
+                          size="sm" 
+                          variant="ghost" 
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleDownloadCertificate(cert.certificate_id, cert.cert_code)}
+                          disabled={downloadingCert === cert.certificate_id}
+                          data-testid={`download-cert-${cert.certificate_id}`}
+                        >
+                          {downloadingCert === cert.certificate_id ? (
+                            <LuLoaderCircle className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <LuDownload className="w-4 h-4" />
+                          )}
                         </Button>
-                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
-                          <LuShare2 className="w-4 h-4" />
+                        <Button 
+                          size="sm" 
+                          variant="ghost" 
+                          className="h-8 w-8 p-0"
+                          onClick={() => handleViewCertificate(cert.certificate_id)}
+                          data-testid={`view-cert-${cert.certificate_id}`}
+                        >
+                          <LuExternalLink className="w-4 h-4" />
                         </Button>
                       </div>
                     </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : eligibleCerts.length > 0 ? (
+            <div className="space-y-4">
+              <p className="text-zinc-400 mb-4">You're eligible for {eligibleCerts.length} certificate(s)! Generate them below:</p>
+              {eligibleCerts.map((cert) => {
+                const VendorIcon = vendorIcons[cert.vendor] || LuTerminal;
+                const vendorColor = vendorColors[cert.vendor] || "#22C55E";
+                
+                return (
+                  <div
+                    key={cert.cert_id}
+                    className="flex items-center justify-between p-4 bg-zinc-800/50 rounded-lg"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-10 h-10 rounded-lg flex items-center justify-center"
+                        style={{ backgroundColor: `${vendorColor}20` }}
+                      >
+                        <VendorIcon className="w-5 h-5" style={{ color: vendorColor }} />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold">{cert.cert_name}</h3>
+                        <p className="text-xs text-zinc-500">{cert.readiness_percentage}% Ready</p>
+                      </div>
+                    </div>
+                    <Button
+                      onClick={() => handleGenerateCertificate(cert.cert_id)}
+                      disabled={generatingCert === cert.cert_id}
+                      className="bg-amber-500 hover:bg-amber-400 text-zinc-950"
+                      data-testid={`generate-cert-${cert.cert_id}`}
+                    >
+                      {generatingCert === cert.cert_id ? (
+                        <>
+                          <LuLoaderCircle className="w-4 h-4 mr-2 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <LuAward className="w-4 h-4 mr-2" />
+                          Generate Certificate
+                        </>
+                      )}
+                    </Button>
                   </div>
                 );
               })}
