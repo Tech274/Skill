@@ -131,6 +131,16 @@ export default function AssessmentResults() {
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-4">
           <Button
+            onClick={() => navigate(`/assessment/${assessmentId}/review`, { state: { certId } })}
+            variant="outline"
+            className="flex-1 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
+            data-testid="review-btn"
+          >
+            <LuEye className="w-4 h-4 mr-2" />
+            Review Answers
+          </Button>
+          
+          <Button
             onClick={() => navigate(`/assessment/${assessmentId}`, { state: { certId } })}
             variant="outline"
             className="flex-1 border-zinc-700"
