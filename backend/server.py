@@ -393,6 +393,7 @@ async def submit_assessment(data: AssessmentSubmission, user: Dict = Depends(req
         "score": score,
         "passed": passed,
         "weak_areas": list(set(weak_areas)),
+        "answers": data.answers,
         "completed_at": datetime.now(timezone.utc).isoformat()
     }
     
