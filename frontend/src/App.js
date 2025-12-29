@@ -22,6 +22,10 @@ import Checkout from "./pages/Checkout";
 import CheckoutSuccess from "./pages/CheckoutSuccess";
 import Profile from "./pages/Profile";
 import CertificateView from "./pages/CertificateView";
+import Leaderboard from "./pages/Leaderboard";
+import Discussions from "./pages/Discussions";
+import DiscussionPost from "./pages/DiscussionPost";
+import Videos from "./pages/Videos";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
