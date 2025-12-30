@@ -2680,6 +2680,257 @@ async def get_engagement_status(user: Dict = Depends(require_auth)):
         "engagement_level": "high" if days_inactive < 3 else "medium" if days_inactive < 7 else "low"
     }
 
+# ============== CATALOG ROUTES ==============
+
+@api_router.get("/labs/catalog")
+async def get_labs_catalog(
+    request: Request,
+    search: Optional[str] = None,
+    certification: Optional[str] = None,
+    vendor: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    domain: Optional[str] = None,
+    page: int = 1,
+    limit: int = 12
+):
+    """Get all labs across all certifications with filters"""
+    user = await get_current_user(request)
+    
+    # Build query filter
+    query = {}
+    if certification:
+        query["cert_id"] = certification
+    if difficulty:
+        query["difficulty"] = difficulty
+    if domain:
+        query["exam_domain"] = {"$regex": domain, "$options": "i"}
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Get all labs
+    all_labs = await db.labs.find(query, {"_id": 0, "instructions": 0}).to_list(500)
+    
+    # Get all certifications for mapping and vendor filter
+    certifications = await db.certifications.find({}, {"_id": 0}).to_list(100)
+    cert_map = {c["cert_id"]: c for c in certifications}
+    
+    # Filter by vendor if specified
+    if vendor:
+        all_labs = [lab for lab in all_labs if cert_map.get(lab["cert_id"], {}).get("vendor", "").lower() == vendor.lower()]
+    
+    # Get user progress for status
+    user_completed_labs = set()
+    if user:
+        progress_list = await db.user_progress.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+        for progress in progress_list:
+            user_completed_labs.update(progress.get("labs_completed", []))
+    
+    # Enrich labs with certification info and status
+    enriched_labs = []
+    for lab in all_labs:
+        cert = cert_map.get(lab["cert_id"], {})
+        lab["certification_name"] = cert.get("name", "Unknown")
+        lab["vendor"] = cert.get("vendor", "Unknown")
+        lab["status"] = "completed" if lab["lab_id"] in user_completed_labs else "not_started"
+        lab["is_locked"] = user is None or (user.get("subscription_status") != "premium" and lab.get("difficulty") == "Advanced")
+        enriched_labs.append(lab)
+    
+    # Get unique filter options
+    vendors = list(set(cert.get("vendor") for cert in certifications))
+    difficulties = list(set(lab.get("difficulty") for lab in enriched_labs if lab.get("difficulty")))
+    domains = list(set(lab.get("exam_domain") for lab in enriched_labs if lab.get("exam_domain")))
+    
+    # Pagination
+    total = len(enriched_labs)
+    start = (page - 1) * limit
+    end = start + limit
+    paginated_labs = enriched_labs[start:end]
+    
+    return {
+        "labs": paginated_labs,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit,
+        "filters": {
+            "certifications": [{"cert_id": c["cert_id"], "name": c["name"], "vendor": c["vendor"]} for c in certifications],
+            "vendors": sorted(vendors),
+            "difficulties": sorted(difficulties),
+            "domains": sorted(domains)
+        }
+    }
+
+@api_router.get("/projects/catalog")
+async def get_projects_catalog(
+    request: Request,
+    search: Optional[str] = None,
+    certification: Optional[str] = None,
+    vendor: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    technology: Optional[str] = None,
+    page: int = 1,
+    limit: int = 12
+):
+    """Get all projects across all certifications with filters"""
+    user = await get_current_user(request)
+    
+    # Build query filter
+    query = {}
+    if certification:
+        query["cert_id"] = certification
+    if difficulty:
+        query["difficulty"] = difficulty
+    if technology:
+        query["technologies"] = {"$regex": technology, "$options": "i"}
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}},
+            {"business_scenario": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Get all projects
+    all_projects = await db.projects.find(query, {"_id": 0, "tasks": 0}).to_list(500)
+    
+    # Get all certifications for mapping and vendor filter
+    certifications = await db.certifications.find({}, {"_id": 0}).to_list(100)
+    cert_map = {c["cert_id"]: c for c in certifications}
+    
+    # Filter by vendor if specified
+    if vendor:
+        all_projects = [proj for proj in all_projects if cert_map.get(proj["cert_id"], {}).get("vendor", "").lower() == vendor.lower()]
+    
+    # Get user progress for status
+    user_completed_projects = set()
+    if user:
+        progress_list = await db.user_progress.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+        for progress in progress_list:
+            user_completed_projects.update(progress.get("projects_completed", []))
+    
+    # Enrich projects with certification info and status
+    enriched_projects = []
+    all_technologies = set()
+    for proj in all_projects:
+        cert = cert_map.get(proj["cert_id"], {})
+        proj["certification_name"] = cert.get("name", "Unknown")
+        proj["vendor"] = cert.get("vendor", "Unknown")
+        proj["status"] = "completed" if proj["project_id"] in user_completed_projects else "not_started"
+        proj["is_locked"] = user is None or (user.get("subscription_status") != "premium" and proj.get("difficulty") == "Advanced")
+        enriched_projects.append(proj)
+        if proj.get("technologies"):
+            all_technologies.update(proj["technologies"])
+    
+    # Get unique filter options
+    vendors = list(set(cert.get("vendor") for cert in certifications))
+    difficulties = list(set(proj.get("difficulty") for proj in enriched_projects if proj.get("difficulty")))
+    
+    # Pagination
+    total = len(enriched_projects)
+    start = (page - 1) * limit
+    end = start + limit
+    paginated_projects = enriched_projects[start:end]
+    
+    return {
+        "projects": paginated_projects,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit,
+        "filters": {
+            "certifications": [{"cert_id": c["cert_id"], "name": c["name"], "vendor": c["vendor"]} for c in certifications],
+            "vendors": sorted(vendors),
+            "difficulties": sorted(difficulties),
+            "technologies": sorted(list(all_technologies))
+        }
+    }
+
+@api_router.get("/assessments/catalog")
+async def get_assessments_catalog(
+    request: Request,
+    search: Optional[str] = None,
+    certification: Optional[str] = None,
+    vendor: Optional[str] = None,
+    assessment_type: Optional[str] = None,
+    domain: Optional[str] = None,
+    page: int = 1,
+    limit: int = 12
+):
+    """Get all assessments across all certifications with filters"""
+    user = await get_current_user(request)
+    
+    # Build query filter
+    query = {}
+    if certification:
+        query["cert_id"] = certification
+    if assessment_type:
+        query["type"] = assessment_type
+    if domain:
+        query["topics"] = {"$regex": domain, "$options": "i"}
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Get all assessments
+    all_assessments = await db.assessments.find(query, {"_id": 0, "questions": 0}).to_list(500)
+    
+    # Get all certifications for mapping and vendor filter
+    certifications = await db.certifications.find({}, {"_id": 0}).to_list(100)
+    cert_map = {c["cert_id"]: c for c in certifications}
+    
+    # Filter by vendor if specified
+    if vendor:
+        all_assessments = [a for a in all_assessments if cert_map.get(a["cert_id"], {}).get("vendor", "").lower() == vendor.lower()]
+    
+    # Get user progress for status
+    user_completed_assessments = set()
+    if user:
+        progress_list = await db.user_progress.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+        for progress in progress_list:
+            for assessment in progress.get("assessments_completed", []):
+                user_completed_assessments.add(assessment.get("assessment_id"))
+    
+    # Enrich assessments with certification info and status
+    enriched_assessments = []
+    all_topics = set()
+    for assess in all_assessments:
+        cert = cert_map.get(assess["cert_id"], {})
+        assess["certification_name"] = cert.get("name", "Unknown")
+        assess["vendor"] = cert.get("vendor", "Unknown")
+        assess["status"] = "completed" if assess["assessment_id"] in user_completed_assessments else "not_started"
+        assess["is_locked"] = user is None or (user.get("subscription_status") != "premium" and assess.get("type") == "full_exam")
+        enriched_assessments.append(assess)
+        if assess.get("topics"):
+            all_topics.update(assess["topics"])
+    
+    # Get unique filter options
+    vendors = list(set(cert.get("vendor") for cert in certifications))
+    types = list(set(a.get("type") for a in enriched_assessments if a.get("type")))
+    
+    # Pagination
+    total = len(enriched_assessments)
+    start = (page - 1) * limit
+    end = start + limit
+    paginated_assessments = enriched_assessments[start:end]
+    
+    return {
+        "assessments": paginated_assessments,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit,
+        "filters": {
+            "certifications": [{"cert_id": c["cert_id"], "name": c["name"], "vendor": c["vendor"]} for c in certifications],
+            "vendors": sorted(vendors),
+            "types": sorted(types),
+            "topics": sorted(list(all_topics))
+        }
+    }
+
 @api_router.get("/")
 async def root():
     return {"message": "SkillTrack365 API", "version": "1.0.0"}
