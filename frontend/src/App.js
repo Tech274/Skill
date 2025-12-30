@@ -129,6 +129,7 @@ const AppRouter = () => {
       <Route path="/login" element={<Login />} />
       <Route path="/hub" element={<ProtectedRoute><CertificationHub /></ProtectedRoute>} />
       <Route path="/certification/:certId" element={<ProtectedRoute><CertificationPath /></ProtectedRoute>} />
+      <Route path="/certification/:certId/roadmap" element={<ProtectedRoute><CertificationRoadmap /></ProtectedRoute>} />
       <Route path="/certification/:certId/labs" element={<ProtectedRoute><CloudLabs /></ProtectedRoute>} />
       <Route path="/lab/:labId" element={<ProtectedRoute><LabDetail /></ProtectedRoute>} />
       <Route path="/lab/:labId/active" element={<ProtectedRoute><ActiveLab /></ProtectedRoute>} />
@@ -142,6 +143,7 @@ const AppRouter = () => {
       <Route path="/certification/:certId/discussions" element={<ProtectedRoute><Discussions /></ProtectedRoute>} />
       <Route path="/discussions/post/:postId" element={<ProtectedRoute><DiscussionPost /></ProtectedRoute>} />
       <Route path="/leaderboard" element={<ProtectedRoute><Leaderboard /></ProtectedRoute>} />
+      <Route path="/badges" element={<ProtectedRoute><Badges /></ProtectedRoute>} />
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/checkout" element={<ProtectedRoute><Checkout /></ProtectedRoute>} />
       <Route path="/certificate/:certificateId" element={<CertificateView />} />
