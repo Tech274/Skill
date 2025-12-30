@@ -413,6 +413,167 @@ class SkillTrack365APITester:
             self.log_test(f"Videos API - GET /videos/{cert_id}/progress (auth protection)", False, str(e))
             return False
 
+    # ============== NEW ENHANCEMENT API TESTS ==============
+
+    def test_smart_recommendations_api(self, cert_id="aws-saa-c03"):
+        """Test smart recommendations API (requires auth)"""
+        try:
+            response = requests.get(f"{self.api_url}/recommendations/{cert_id}", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test(f"Smart Recommendations API - GET /recommendations/{cert_id} (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Smart Recommendations API - GET /recommendations/{cert_id} (auth protection)", False, str(e))
+            return False
+
+    def test_certification_roadmap_api(self, cert_id="aws-saa-c03"):
+        """Test certification roadmap API"""
+        try:
+            response = requests.get(f"{self.api_url}/roadmap/{cert_id}", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                required_fields = ['certification', 'stages', 'overall_progress']
+                missing_fields = [field for field in required_fields if field not in data]
+                if missing_fields:
+                    success = False
+                    details += f", Missing fields: {missing_fields}"
+                else:
+                    stages = data.get('stages', [])
+                    details += f", Stages count: {len(stages)}, Progress: {data.get('overall_progress', 0)}%"
+                    # Verify stage structure
+                    if stages:
+                        stage = stages[0]
+                        stage_fields = ['stage', 'title', 'description', 'type', 'completed']
+                        missing_stage_fields = [field for field in stage_fields if field not in stage]
+                        if missing_stage_fields:
+                            success = False
+                            details += f", Missing stage fields: {missing_stage_fields}"
+            self.log_test(f"Certification Roadmap API - GET /roadmap/{cert_id}", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Certification Roadmap API - GET /roadmap/{cert_id}", False, str(e))
+            return False
+
+    def test_achievement_badges_api(self):
+        """Test achievement badges API (requires auth)"""
+        try:
+            response = requests.get(f"{self.api_url}/badges", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Achievement Badges API - GET /badges (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Achievement Badges API - GET /badges (auth protection)", False, str(e))
+            return False
+
+    def test_certification_leaderboard_api(self, cert_id="aws-saa-c03"):
+        """Test certification-specific leaderboard API"""
+        try:
+            response = requests.get(f"{self.api_url}/leaderboard/certification/{cert_id}", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                required_fields = ['certification', 'leaderboard', 'total_learners']
+                missing_fields = [field for field in required_fields if field not in data]
+                if missing_fields:
+                    success = False
+                    details += f", Missing fields: {missing_fields}"
+                else:
+                    leaderboard = data.get('leaderboard', [])
+                    details += f", Learners count: {len(leaderboard)}, Total: {data.get('total_learners', 0)}"
+                    # Verify leaderboard entry structure
+                    if leaderboard:
+                        entry = leaderboard[0]
+                        entry_fields = ['user_id', 'name', 'xp', 'rank']
+                        missing_entry_fields = [field for field in entry_fields if field not in entry]
+                        if missing_entry_fields:
+                            success = False
+                            details += f", Missing entry fields: {missing_entry_fields}"
+                        else:
+                            details += f", Top learner: {entry.get('name', 'N/A')} (XP: {entry.get('xp', 0)})"
+            self.log_test(f"Certification Leaderboard API - GET /leaderboard/certification/{cert_id}", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Certification Leaderboard API - GET /leaderboard/certification/{cert_id}", False, str(e))
+            return False
+
+    def test_profile_settings_api(self):
+        """Test profile settings API (requires auth)"""
+        # Test GET /api/profile/settings
+        try:
+            response = requests.get(f"{self.api_url}/profile/settings", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Profile Settings API - GET /profile/settings (auth protection)", success, details)
+        except Exception as e:
+            self.log_test("Profile Settings API - GET /profile/settings (auth protection)", False, str(e))
+            success = False
+
+        # Test PUT /api/profile/settings
+        try:
+            settings_data = {"is_public": True}
+            response = requests.put(f"{self.api_url}/profile/settings", json=settings_data, timeout=10)
+            success_put = response.status_code == 401  # Should require auth
+            details_put = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Profile Settings API - PUT /profile/settings (auth protection)", success_put, details_put)
+            return success and success_put
+        except Exception as e:
+            self.log_test("Profile Settings API - PUT /profile/settings (auth protection)", False, str(e))
+            return False
+
+    def test_public_profile_api(self, user_id="test-user-id"):
+        """Test public profile API"""
+        try:
+            response = requests.get(f"{self.api_url}/profile/public/{user_id}", timeout=10)
+            # This should return 404 for non-existent user or 403 if profile is private
+            success = response.status_code in [404, 403]
+            details = f"Status: {response.status_code} (Expected: 404 for non-existent user or 403 for private profile)"
+            self.log_test(f"Public Profile API - GET /profile/public/{user_id}", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Public Profile API - GET /profile/public/{user_id}", False, str(e))
+            return False
+
+    def test_discussion_upvote_api(self, post_id="test-post-id"):
+        """Test discussion upvote API (requires auth)"""
+        try:
+            response = requests.post(f"{self.api_url}/discussions/{post_id}/upvote", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test(f"Discussion Upvote API - POST /discussions/{post_id}/upvote (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Discussion Upvote API - POST /discussions/{post_id}/upvote (auth protection)", False, str(e))
+            return False
+
+    def test_discussion_best_answer_api(self, reply_id="test-reply-id"):
+        """Test discussion best answer API (requires auth)"""
+        try:
+            response = requests.post(f"{self.api_url}/discussions/reply/{reply_id}/best", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test(f"Discussion Best Answer API - POST /discussions/reply/{reply_id}/best (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Discussion Best Answer API - POST /discussions/reply/{reply_id}/best (auth protection)", False, str(e))
+            return False
+
+    def test_engagement_status_api(self):
+        """Test engagement status API (requires auth)"""
+        try:
+            response = requests.get(f"{self.api_url}/engagement/status", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Engagement Status API - GET /engagement/status (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Engagement Status API - GET /engagement/status (auth protection)", False, str(e))
+            return False
+
     def run_all_tests(self):
         """Run all backend API tests"""
         print("🚀 Starting SkillTrack365 Backend API Tests")
