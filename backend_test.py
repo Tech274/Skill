@@ -845,6 +845,24 @@ class SkillTrack365APITester:
         print("Testing Engagement Status API...")
         self.test_engagement_status_api()
         
+        # Test NEW CATALOG ENHANCEMENT FEATURES
+        print("\n📚 Testing NEW CATALOG ENHANCEMENT FEATURES")
+        
+        # Labs Catalog API
+        print("Testing Labs Catalog API...")
+        self.test_labs_catalog_api()
+        self.test_labs_catalog_filters()
+        
+        # Projects Catalog API
+        print("Testing Projects Catalog API...")
+        self.test_projects_catalog_api()
+        self.test_projects_catalog_filters()
+        
+        # Assessments Catalog API
+        print("Testing Assessments Catalog API...")
+        self.test_assessments_catalog_api()
+        self.test_assessments_catalog_filters()
+        
         # Test auth protection
         print("\n🔒 Testing Authentication Protection")
         self.test_auth_endpoints_without_auth()
