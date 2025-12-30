@@ -65,6 +65,8 @@ export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [dashboardData, setDashboardData] = useState(null);
+  const [recommendations, setRecommendations] = useState(null);
+  const [engagement, setEngagement] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -73,8 +75,20 @@ export default function Dashboard() {
 
   const fetchDashboard = async () => {
     try {
-      const response = await axios.get(`${API}/dashboard`, { withCredentials: true });
-      setDashboardData(response.data);
+      const [dashRes, engageRes] = await Promise.all([
+        axios.get(`${API}/dashboard`, { withCredentials: true }),
+        axios.get(`${API}/engagement/status`, { withCredentials: true }).catch(() => null)
+      ]);
+      
+      setDashboardData(dashRes.data);
+      if (engageRes) setEngagement(engageRes.data);
+      
+      // Fetch recommendations for first certification
+      const certs = dashRes.data?.certifications || [];
+      if (certs.length > 0) {
+        const recRes = await axios.get(`${API}/recommendations/${certs[0].cert_id}`, { withCredentials: true });
+        setRecommendations(recRes.data);
+      }
     } catch (error) {
       console.error("Error fetching dashboard:", error);
       toast.error("Failed to load dashboard");
