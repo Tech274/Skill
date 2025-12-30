@@ -15,6 +15,7 @@ import {
   LuSearch,
   LuChevronDown,
   LuTrophy,
+  LuAward,
 } from "react-icons/lu";
 import { FaAws } from "react-icons/fa";
 import { VscAzure } from "react-icons/vsc";
@@ -36,6 +37,7 @@ const navItems = [
   { icon: LuFileText, label: "Assessments", path: "/hub" },
   { icon: LuFolderKanban, label: "Projects", path: "/hub" },
   { icon: LuTrophy, label: "Leaderboard", path: "/leaderboard" },
+  { icon: LuAward, label: "Badges", path: "/badges" },
   { icon: LuLayoutDashboard, label: "Skilltrack Dashboard", path: "/dashboard" },
   { icon: LuUser, label: "Profile", path: "/profile" },
 ];
