@@ -454,7 +454,7 @@ export default function Dashboard() {
             {recommendations.weak_domains?.length > 0 && (
               <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
                 <p className="text-sm text-amber-300">
-                  <LuAlertTriangle className="w-4 h-4 inline mr-2" />
+                  <LuTriangleAlert className="w-4 h-4 inline mr-2" />
                   Focus areas: {recommendations.weak_domains.join(", ")}
                 </p>
               </div>
