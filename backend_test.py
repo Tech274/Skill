@@ -574,6 +574,187 @@ class SkillTrack365APITester:
             self.log_test("Engagement Status API - GET /engagement/status (auth protection)", False, str(e))
             return False
 
+    # ============== CATALOG API TESTS ==============
+
+    def test_labs_catalog_api(self):
+        """Test labs catalog API - basic retrieval"""
+        try:
+            response = requests.get(f"{self.api_url}/catalog/labs", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                required_fields = ['labs', 'total', 'page', 'total_pages', 'filters']
+                missing_fields = [field for field in required_fields if field not in data]
+                if missing_fields:
+                    success = False
+                    details += f", Missing fields: {missing_fields}"
+                else:
+                    labs = data.get('labs', [])
+                    details += f", Labs count: {len(labs)}, Total: {data.get('total', 0)}"
+                    # Verify lab structure
+                    if labs:
+                        lab = labs[0]
+                        lab_fields = ['lab_id', 'title', 'certification_name', 'vendor', 'status', 'is_locked']
+                        missing_lab_fields = [field for field in lab_fields if field not in lab]
+                        if missing_lab_fields:
+                            success = False
+                            details += f", Missing lab fields: {missing_lab_fields}"
+                    # Verify filters structure
+                    filters = data.get('filters', {})
+                    filter_fields = ['certifications', 'vendors', 'difficulties', 'domains']
+                    missing_filter_fields = [field for field in filter_fields if field not in filters]
+                    if missing_filter_fields:
+                        success = False
+                        details += f", Missing filter fields: {missing_filter_fields}"
+            self.log_test("Labs Catalog API - Basic Retrieval", success, details)
+            return success, data if success else {}
+        except Exception as e:
+            self.log_test("Labs Catalog API - Basic Retrieval", False, str(e))
+            return False, {}
+
+    def test_labs_catalog_filters(self):
+        """Test labs catalog API with various filters"""
+        test_cases = [
+            ("vendor=AWS", {"vendor": "AWS"}),
+            ("certification=aws-saa-c03", {"certification": "aws-saa-c03"}),
+            ("difficulty=Intermediate", {"difficulty": "Intermediate"}),
+            ("domain=Security", {"domain": "Security"}),
+            ("search=serverless", {"search": "serverless"}),
+            ("page=1&limit=5", {"page": "1", "limit": "5"})
+        ]
+        
+        for test_name, params in test_cases:
+            try:
+                response = requests.get(f"{self.api_url}/catalog/labs", params=params, timeout=10)
+                success = response.status_code == 200
+                details = f"Status: {response.status_code}"
+                if success:
+                    data = response.json()
+                    labs = data.get('labs', [])
+                    details += f", Labs count: {len(labs)}"
+                self.log_test(f"Labs Catalog API - Filter ({test_name})", success, details)
+            except Exception as e:
+                self.log_test(f"Labs Catalog API - Filter ({test_name})", False, str(e))
+
+    def test_projects_catalog_api(self):
+        """Test projects catalog API - basic retrieval"""
+        try:
+            response = requests.get(f"{self.api_url}/catalog/projects", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                required_fields = ['projects', 'total', 'page', 'total_pages', 'filters']
+                missing_fields = [field for field in required_fields if field not in data]
+                if missing_fields:
+                    success = False
+                    details += f", Missing fields: {missing_fields}"
+                else:
+                    projects = data.get('projects', [])
+                    details += f", Projects count: {len(projects)}, Total: {data.get('total', 0)}"
+                    # Verify project structure
+                    if projects:
+                        project = projects[0]
+                        project_fields = ['project_id', 'title', 'certification_name', 'vendor', 'status', 'is_locked']
+                        missing_project_fields = [field for field in project_fields if field not in project]
+                        if missing_project_fields:
+                            success = False
+                            details += f", Missing project fields: {missing_project_fields}"
+                    # Verify filters structure
+                    filters = data.get('filters', {})
+                    filter_fields = ['certifications', 'vendors', 'difficulties', 'technologies']
+                    missing_filter_fields = [field for field in filter_fields if field not in filters]
+                    if missing_filter_fields:
+                        success = False
+                        details += f", Missing filter fields: {missing_filter_fields}"
+            self.log_test("Projects Catalog API - Basic Retrieval", success, details)
+            return success, data if success else {}
+        except Exception as e:
+            self.log_test("Projects Catalog API - Basic Retrieval", False, str(e))
+            return False, {}
+
+    def test_projects_catalog_filters(self):
+        """Test projects catalog API with various filters"""
+        test_cases = [
+            ("vendor=GCP", {"vendor": "GCP"}),
+            ("difficulty=Advanced", {"difficulty": "Advanced"}),
+            ("technology=GKE", {"technology": "GKE"}),
+            ("search=microservices", {"search": "microservices"})
+        ]
+        
+        for test_name, params in test_cases:
+            try:
+                response = requests.get(f"{self.api_url}/catalog/projects", params=params, timeout=10)
+                success = response.status_code == 200
+                details = f"Status: {response.status_code}"
+                if success:
+                    data = response.json()
+                    projects = data.get('projects', [])
+                    details += f", Projects count: {len(projects)}"
+                self.log_test(f"Projects Catalog API - Filter ({test_name})", success, details)
+            except Exception as e:
+                self.log_test(f"Projects Catalog API - Filter ({test_name})", False, str(e))
+
+    def test_assessments_catalog_api(self):
+        """Test assessments catalog API - basic retrieval"""
+        try:
+            response = requests.get(f"{self.api_url}/catalog/assessments", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                required_fields = ['assessments', 'total', 'page', 'total_pages', 'filters']
+                missing_fields = [field for field in required_fields if field not in data]
+                if missing_fields:
+                    success = False
+                    details += f", Missing fields: {missing_fields}"
+                else:
+                    assessments = data.get('assessments', [])
+                    details += f", Assessments count: {len(assessments)}, Total: {data.get('total', 0)}"
+                    # Verify assessment structure
+                    if assessments:
+                        assessment = assessments[0]
+                        assessment_fields = ['assessment_id', 'title', 'certification_name', 'vendor', 'status', 'is_locked']
+                        missing_assessment_fields = [field for field in assessment_fields if field not in assessment]
+                        if missing_assessment_fields:
+                            success = False
+                            details += f", Missing assessment fields: {missing_assessment_fields}"
+                    # Verify filters structure
+                    filters = data.get('filters', {})
+                    filter_fields = ['certifications', 'vendors', 'types', 'topics']
+                    missing_filter_fields = [field for field in filter_fields if field not in filters]
+                    if missing_filter_fields:
+                        success = False
+                        details += f", Missing filter fields: {missing_filter_fields}"
+            self.log_test("Assessments Catalog API - Basic Retrieval", success, details)
+            return success, data if success else {}
+        except Exception as e:
+            self.log_test("Assessments Catalog API - Basic Retrieval", False, str(e))
+            return False, {}
+
+    def test_assessments_catalog_filters(self):
+        """Test assessments catalog API with various filters"""
+        test_cases = [
+            ("vendor=AWS", {"vendor": "AWS"}),
+            ("assessment_type=domain", {"assessment_type": "domain"}),
+            ("domain=IAM", {"domain": "IAM"}),
+            ("search=security", {"search": "security"})
+        ]
+        
+        for test_name, params in test_cases:
+            try:
+                response = requests.get(f"{self.api_url}/catalog/assessments", params=params, timeout=10)
+                success = response.status_code == 200
+                details = f"Status: {response.status_code}"
+                if success:
+                    data = response.json()
+                    assessments = data.get('assessments', [])
+                    details += f", Assessments count: {len(assessments)}"
+                self.log_test(f"Assessments Catalog API - Filter ({test_name})", success, details)
+            except Exception as e:
+                self.log_test(f"Assessments Catalog API - Filter ({test_name})", False, str(e))
+
     def run_all_tests(self):
         """Run all backend API tests"""
         print("🚀 Starting SkillTrack365 Backend API Tests")
