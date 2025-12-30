@@ -210,6 +210,36 @@ export default function Profile() {
                 )}
               </div>
               <p className="text-zinc-400">{user?.email}</p>
+              
+              {/* Public Profile Toggle */}
+              <div className="flex items-center gap-4 mt-3">
+                <div className="flex items-center gap-2">
+                  {profileSettings.is_public ? (
+                    <LuGlobe className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <LuLock className="w-4 h-4 text-zinc-500" />
+                  )}
+                  <span className="text-sm text-zinc-400">
+                    {profileSettings.is_public ? "Public Profile" : "Private Profile"}
+                  </span>
+                  <Switch
+                    checked={profileSettings.is_public}
+                    onCheckedChange={handleTogglePublic}
+                    disabled={updatingSettings}
+                  />
+                </div>
+                {profileSettings.is_public && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs border-zinc-700"
+                    onClick={handleShareProfile}
+                  >
+                    <LuCopy className="w-3 h-3 mr-1" />
+                    Copy Profile Link
+                  </Button>
+                )}
+              </div>
             </div>
 
             <div className="flex gap-2">
