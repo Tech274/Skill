@@ -328,7 +328,7 @@ export default function Profile() {
             </div>
           ) : eligibleCerts.length > 0 ? (
             <div className="space-y-4">
-              <p className="text-zinc-400 mb-4">You're eligible for {eligibleCerts.length} certificate(s)! Generate them below:</p>
+              <p className="text-zinc-400 mb-4">You&apos;re eligible for {eligibleCerts.length} certificate(s)! Generate them below:</p>
               {eligibleCerts.map((cert) => {
                 const VendorIcon = vendorIcons[cert.vendor] || LuTerminal;
                 const vendorColor = vendorColors[cert.vendor] || "#22C55E";
