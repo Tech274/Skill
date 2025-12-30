@@ -223,8 +223,17 @@ export default function CertificationPath() {
             {/* Quick Actions */}
             <div className="flex flex-wrap gap-4">
               <Button
+                onClick={() => navigate(`/certification/${certId}/roadmap`)}
+                className="bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white font-bold"
+                data-testid="view-roadmap-btn"
+              >
+                <LuTarget className="w-4 h-4 mr-2" />
+                View Roadmap
+              </Button>
+              <Button
                 onClick={() => navigate(`/certification/${certId}/labs`)}
-                className="bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-bold"
+                variant="outline"
+                className="border-zinc-700"
                 data-testid="start-labs-btn"
               >
                 <LuTerminal className="w-4 h-4 mr-2" />
