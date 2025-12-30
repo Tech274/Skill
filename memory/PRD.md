@@ -41,36 +41,42 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - ✅ **Assessment Review Mode** - Review submitted answers with correct/incorrect marking
 - ✅ **Lab Bookmarking** - Save/unsave favorite labs for quick access
 - ✅ **Lab Notes** - Take and save notes during lab sessions
-- ✅ **Social Sharing** - Share certificates on Twitter/LinkedIn with copy link
+
+### Phase 3: Engagement Features (December 30, 2025)
+- ✅ **Leaderboard/Rankings** - XP-based ranking system with top learners podium
+- ✅ **Discussion Forums** - Per-certification discussion boards with posts, replies, likes
+- ✅ **Video Content** - Video lessons with YouTube embedding, progress tracking
+- ✅ **Social Sharing** - Share certificates on LinkedIn/Twitter with auto-generated messages
 
 ### Pre-populated Data
 - 6 Certifications: AWS SAA-C03, AWS DVA-C02, AZ-900, AZ-104, GCP ACE, DevOps Pro
 - 13 Cloud Labs with step-by-step instructions
 - 8 Assessments (domain tests + full exams)
 - 5 Real-world projects
+- Video lessons per certification (seeded via /api/seed-videos)
 
 ## Prioritized Backlog
 
-### P0 (Critical) - DONE
-- All critical features implemented ✅
+### P0 (Critical) - DONE ✅
+- All critical MVP features implemented
 
-### P1 (High Priority) - DONE
+### P1 (High Priority) - DONE ✅
 - ✅ PDF certificate generation and download
 - ✅ Lab bookmarking and notes
 - ✅ Assessment review mode
-- ✅ Social sharing of certificates
+- ✅ Social sharing of certificates (LinkedIn, Twitter)
+- ✅ Leaderboard/rankings
+- ✅ Discussion forums
+- ✅ Video content integration
 
 ### P2 (Medium Priority)
 - [ ] Email notifications for subscription status
-- [ ] Leaderboard/rankings
-- [ ] Discussion forums per certification
-- [ ] Video content integration
 - [ ] Mobile app (React Native)
+- [ ] Real cloud sandbox integration (AWS/Azure/GCP)
 
 ### P3 (Nice to Have)
 - [ ] AI-powered study recommendations
 - [ ] Spaced repetition for exam prep
-- [ ] Integration with actual cloud sandboxes (AWS/Azure/GCP)
 - [ ] Team/enterprise features with admin dashboard
 
 ## Technical Architecture
@@ -83,6 +89,7 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - **Deployment:** Kubernetes-based container
 
 ## API Endpoints
+
 ### Authentication
 - `POST /api/auth/session` - Create session from OAuth
 - `GET /api/auth/me` - Get current user
@@ -98,35 +105,86 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 ### Labs
 - `GET /api/labs/{lab_id}` - Get lab details
 - `POST /api/labs/complete` - Mark lab as complete
+- `POST /api/bookmarks` - Toggle lab bookmark
+- `GET/POST /api/notes/{lab_id}` - Get/save lab notes
 
 ### Assessments
-- `GET /api/assessments/{assessment_id}` - Get assessment with questions
-- `POST /api/assessments/submit` - Submit assessment answers
+- `GET /api/assessments/{assessment_id}` - Get assessment
+- `POST /api/assessments/submit` - Submit answers
 - `GET /api/assessments/{assessment_id}/review` - Review submitted answers
 
 ### Projects
 - `GET /api/projects/{project_id}` - Get project details
-- `POST /api/projects/complete` - Mark project as complete
+- `POST /api/projects/complete` - Mark project complete
 
 ### Dashboard & Progress
 - `GET /api/dashboard` - Get user dashboard data
 - `GET /api/progress/{cert_id}` - Get certification progress
 
-### Bookmarks & Notes
-- `GET /api/bookmarks` - Get user's bookmarks
-- `POST /api/bookmarks` - Toggle bookmark
-- `GET /api/notes/{lab_id}` - Get note for lab
-- `POST /api/notes` - Save note
-
-### Certificates
-- `GET /api/certificates` - Get earned certificates
-- `POST /api/certificates/generate` - Generate certificate (requires 80%+ readiness)
-- `GET /api/certificates/{id}/download` - Download PDF certificate
-- `GET /api/certificates/public/{id}` - Get public certificate data
-
 ### Payments
 - `POST /api/checkout/create` - Create Stripe checkout session
 - `GET /api/checkout/status/{session_id}` - Check payment status
 
-### Utility
-- `POST /api/seed` - Seed database with test data
+### Certificates
+- `GET /api/certificates` - Get user's certificates
+- `POST /api/certificates/generate` - Generate new certificate
+- `GET /api/certificates/{id}/download` - Download certificate PDF
+- `GET /api/certificates/public/{id}` - Get public certificate view
+
+### Leaderboard
+- `GET /api/leaderboard` - Get top 20 learners by XP
+- `GET /api/leaderboard/me` - Get current user's rank
+
+### Discussion Forums
+- `GET /api/discussions/{cert_id}` - List discussions for certification
+- `POST /api/discussions` - Create new discussion
+- `GET /api/discussions/post/{post_id}` - Get post with replies
+- `POST /api/discussions/reply` - Add reply to post
+- `POST /api/discussions/{post_id}/like` - Toggle like
+
+### Video Content
+- `GET /api/videos/{cert_id}` - Get videos for certification
+- `GET /api/videos/watch/{video_id}` - Get single video
+- `POST /api/videos/{video_id}/complete` - Mark video watched
+- `GET /api/videos/{cert_id}/progress` - Get video progress
+- `POST /api/seed-videos` - Seed video content
+
+### Data Seeding
+- `POST /api/seed` - Seed certifications, labs, assessments, projects
+- `POST /api/seed-videos` - Seed video content
+
+## Frontend Routes
+- `/` - Landing page
+- `/login` - Login with Google OAuth
+- `/hub` - Certification Hub (protected)
+- `/certification/:certId` - Certification Path (protected)
+- `/certification/:certId/labs` - Cloud Labs (protected)
+- `/lab/:labId` - Lab Detail (protected)
+- `/lab/:labId/active` - Active Lab (protected)
+- `/certification/:certId/assessments` - Assessments (protected)
+- `/assessment/:assessmentId` - Take Assessment (protected)
+- `/assessment/:assessmentId/results` - Results (protected)
+- `/assessment/:assessmentId/review` - Review (protected)
+- `/certification/:certId/projects` - Projects (protected)
+- `/project/:projectId` - Project Workspace (protected)
+- `/certification/:certId/videos` - Videos (protected)
+- `/certification/:certId/discussions` - Discussions (protected)
+- `/discussions/post/:postId` - Discussion Post (protected)
+- `/leaderboard` - Leaderboard (protected)
+- `/dashboard` - Skilltrack Dashboard (protected)
+- `/checkout` - Subscription Checkout (protected)
+- `/checkout/success` - Payment Success (protected)
+- `/profile` - User Profile (protected)
+- `/certificate/:certificateId` - Public Certificate View
+
+## XP System (Leaderboard)
+- Lab completion: 100 XP
+- Assessment passed: 150 XP
+- Project completion: 200 XP
+- Certificate earned: 500 XP
+
+## Notes
+- Cloud console in labs is simulated (not real cloud environment)
+- Video content uses YouTube embeds
+- All protected routes require Google OAuth authentication
+- Social sharing generates pre-populated share text with certification name and platform branding
