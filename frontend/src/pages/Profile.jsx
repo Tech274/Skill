@@ -265,7 +265,7 @@ export default function Profile() {
                       <Badge className="bg-amber-500/20 text-amber-400">
                         {cert.readiness_percentage}% Ready
                       </Badge>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1">
                         <Button 
                           size="sm" 
                           variant="ghost" 
@@ -273,6 +273,7 @@ export default function Profile() {
                           onClick={() => handleDownloadCertificate(cert.certificate_id, cert.cert_code)}
                           disabled={downloadingCert === cert.certificate_id}
                           data-testid={`download-cert-${cert.certificate_id}`}
+                          title="Download PDF"
                         >
                           {downloadingCert === cert.certificate_id ? (
                             <LuLoaderCircle className="w-4 h-4 animate-spin" />
@@ -286,9 +287,39 @@ export default function Profile() {
                           className="h-8 w-8 p-0"
                           onClick={() => handleViewCertificate(cert.certificate_id)}
                           data-testid={`view-cert-${cert.certificate_id}`}
+                          title="View Certificate"
                         >
                           <LuExternalLink className="w-4 h-4" />
                         </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button 
+                              size="sm" 
+                              variant="ghost" 
+                              className="h-8 w-8 p-0"
+                              data-testid={`share-cert-${cert.certificate_id}`}
+                              title="Share Certificate"
+                            >
+                              <LuShare2 className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800">
+                            <DropdownMenuItem 
+                              onClick={() => handleShareLinkedIn(cert)} 
+                              className="cursor-pointer"
+                            >
+                              <LuLinkedin className="w-4 h-4 mr-2 text-[#0A66C2]" />
+                              Share on LinkedIn
+                            </DropdownMenuItem>
+                            <DropdownMenuItem 
+                              onClick={() => handleShareTwitter(cert)} 
+                              className="cursor-pointer"
+                            >
+                              <LuTwitter className="w-4 h-4 mr-2 text-[#1DA1F2]" />
+                              Share on X (Twitter)
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </div>
                   </div>
