@@ -134,13 +134,16 @@ const AppRouter = () => {
       <Route path="/certification/:certId" element={<ProtectedRoute><CertificationPath /></ProtectedRoute>} />
       <Route path="/certification/:certId/roadmap" element={<ProtectedRoute><CertificationRoadmap /></ProtectedRoute>} />
       <Route path="/certification/:certId/labs" element={<ProtectedRoute><CloudLabs /></ProtectedRoute>} />
+      <Route path="/labs" element={<ProtectedRoute><LabsCatalog /></ProtectedRoute>} />
       <Route path="/lab/:labId" element={<ProtectedRoute><LabDetail /></ProtectedRoute>} />
       <Route path="/lab/:labId/active" element={<ProtectedRoute><ActiveLab /></ProtectedRoute>} />
       <Route path="/certification/:certId/assessments" element={<ProtectedRoute><Assessments /></ProtectedRoute>} />
+      <Route path="/assessments" element={<ProtectedRoute><AssessmentsCatalog /></ProtectedRoute>} />
       <Route path="/assessment/:assessmentId" element={<ProtectedRoute><AssessmentTake /></ProtectedRoute>} />
       <Route path="/assessment/:assessmentId/results" element={<ProtectedRoute><AssessmentResults /></ProtectedRoute>} />
       <Route path="/assessment/:assessmentId/review" element={<ProtectedRoute><AssessmentReview /></ProtectedRoute>} />
       <Route path="/certification/:certId/projects" element={<ProtectedRoute><Projects /></ProtectedRoute>} />
+      <Route path="/projects" element={<ProtectedRoute><ProjectsCatalog /></ProtectedRoute>} />
       <Route path="/project/:projectId" element={<ProtectedRoute><ProjectWorkspace /></ProtectedRoute>} />
       <Route path="/certification/:certId/videos" element={<ProtectedRoute><Videos /></ProtectedRoute>} />
       <Route path="/certification/:certId/discussions" element={<ProtectedRoute><Discussions /></ProtectedRoute>} />
