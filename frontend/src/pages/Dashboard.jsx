@@ -15,7 +15,7 @@ import {
   LuTarget,
   LuTrendingUp,
   LuZap,
-  LuAlertTriangle,
+  LuTriangleAlert,
   LuSparkles,
   LuMap,
 } from "react-icons/lu";
