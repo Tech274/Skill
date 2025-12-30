@@ -2682,7 +2682,7 @@ async def get_engagement_status(user: Dict = Depends(require_auth)):
 
 # ============== CATALOG ROUTES ==============
 
-@api_router.get("/labs/catalog")
+@api_router.get("/catalog/labs")
 async def get_labs_catalog(
     request: Request,
     search: Optional[str] = None,
