@@ -8,6 +8,7 @@ import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import CertificationHub from "./pages/CertificationHub";
 import CertificationPath from "./pages/CertificationPath";
+import CertificationRoadmap from "./pages/CertificationRoadmap";
 import CloudLabs from "./pages/CloudLabs";
 import LabDetail from "./pages/LabDetail";
 import ActiveLab from "./pages/ActiveLab";
@@ -26,6 +27,7 @@ import Leaderboard from "./pages/Leaderboard";
 import Discussions from "./pages/Discussions";
 import DiscussionPost from "./pages/DiscussionPost";
 import Videos from "./pages/Videos";
+import Badges from "./pages/Badges";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
