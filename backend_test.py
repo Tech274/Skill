@@ -186,6 +186,233 @@ class SkillTrack365APITester:
             self.log_test("Certificate Download Protection", False, str(e))
             return False
 
+    def test_seed_videos(self):
+        """Test video content seeding endpoint"""
+        try:
+            response = requests.post(f"{self.api_url}/seed-videos", timeout=30)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                details += f", Message: {data.get('message', 'N/A')}"
+            self.log_test("Seed Videos", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Seed Videos", False, str(e))
+            return False
+
+    def test_leaderboard_api(self):
+        """Test leaderboard API endpoints"""
+        # Test GET /api/leaderboard
+        try:
+            response = requests.get(f"{self.api_url}/leaderboard", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                if isinstance(data, list):
+                    details += f", Users count: {len(data)}"
+                    # Verify structure of leaderboard entries
+                    if data:
+                        user = data[0]
+                        required_fields = ['user_id', 'name', 'xp', 'rank']
+                        missing_fields = [field for field in required_fields if field not in user]
+                        if missing_fields:
+                            success = False
+                            details += f", Missing fields: {missing_fields}"
+                        else:
+                            details += f", Top user: {user.get('name', 'N/A')} (XP: {user.get('xp', 0)})"
+                else:
+                    success = False
+                    details += ", Expected array response"
+            self.log_test("Leaderboard API - GET /leaderboard", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Leaderboard API - GET /leaderboard", False, str(e))
+            return False
+
+    def test_leaderboard_me_api(self):
+        """Test leaderboard me API endpoint (requires auth)"""
+        try:
+            response = requests.get(f"{self.api_url}/leaderboard/me", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Leaderboard API - GET /leaderboard/me (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Leaderboard API - GET /leaderboard/me (auth protection)", False, str(e))
+            return False
+
+    def test_discussions_api(self, cert_id="aws-saa-c03"):
+        """Test discussion forums API endpoints"""
+        # Test GET /api/discussions/{cert_id}
+        try:
+            response = requests.get(f"{self.api_url}/discussions/{cert_id}", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                if isinstance(data, dict) and 'posts' in data:
+                    posts = data.get('posts', [])
+                    details += f", Posts count: {len(posts)}, Total: {data.get('total', 0)}"
+                    # Verify structure
+                    if posts:
+                        post = posts[0]
+                        required_fields = ['post_id', 'title', 'content', 'author']
+                        missing_fields = [field for field in required_fields if field not in post]
+                        if missing_fields:
+                            success = False
+                            details += f", Missing fields: {missing_fields}"
+                else:
+                    success = False
+                    details += ", Expected object with 'posts' array"
+            self.log_test(f"Discussions API - GET /discussions/{cert_id}", success, details)
+            return success, data if success else {}
+        except Exception as e:
+            self.log_test(f"Discussions API - GET /discussions/{cert_id}", False, str(e))
+            return False, {}
+
+    def test_discussions_post_api(self):
+        """Test creating discussion post (requires auth)"""
+        try:
+            post_data = {
+                "cert_id": "aws-saa-c03",
+                "title": "Test Discussion Post",
+                "content": "This is a test post content"
+            }
+            response = requests.post(f"{self.api_url}/discussions", json=post_data, timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Discussions API - POST /discussions (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Discussions API - POST /discussions (auth protection)", False, str(e))
+            return False
+
+    def test_discussion_post_detail_api(self, post_id):
+        """Test getting single discussion post"""
+        try:
+            response = requests.get(f"{self.api_url}/discussions/post/{post_id}", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                required_fields = ['post_id', 'title', 'content', 'author', 'replies']
+                missing_fields = [field for field in required_fields if field not in data]
+                if missing_fields:
+                    success = False
+                    details += f", Missing fields: {missing_fields}"
+                else:
+                    details += f", Post: {data.get('title', 'N/A')}, Replies: {len(data.get('replies', []))}"
+            self.log_test(f"Discussions API - GET /discussions/post/{post_id}", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Discussions API - GET /discussions/post/{post_id}", False, str(e))
+            return False
+
+    def test_discussion_reply_api(self):
+        """Test adding reply to discussion (requires auth)"""
+        try:
+            reply_data = {
+                "post_id": "test-post-id",
+                "content": "This is a test reply"
+            }
+            response = requests.post(f"{self.api_url}/discussions/reply", json=reply_data, timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Discussions API - POST /discussions/reply (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Discussions API - POST /discussions/reply (auth protection)", False, str(e))
+            return False
+
+    def test_discussion_like_api(self):
+        """Test liking discussion post (requires auth)"""
+        try:
+            response = requests.post(f"{self.api_url}/discussions/test-post-id/like", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Discussions API - POST /discussions/{post_id}/like (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Discussions API - POST /discussions/{post_id}/like (auth protection)", False, str(e))
+            return False
+
+    def test_videos_api(self, cert_id="aws-saa-c03"):
+        """Test video content API endpoints"""
+        # Test GET /api/videos/{cert_id}
+        try:
+            response = requests.get(f"{self.api_url}/videos/{cert_id}", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                if isinstance(data, list):
+                    details += f", Videos count: {len(data)}"
+                    # Verify structure
+                    if data:
+                        video = data[0]
+                        required_fields = ['video_id', 'title', 'description', 'youtube_url', 'duration_minutes']
+                        missing_fields = [field for field in required_fields if field not in video]
+                        if missing_fields:
+                            success = False
+                            details += f", Missing fields: {missing_fields}"
+                        else:
+                            details += f", First video: {video.get('title', 'N/A')}"
+                else:
+                    success = False
+                    details += ", Expected array response"
+            self.log_test(f"Videos API - GET /videos/{cert_id}", success, details)
+            return success, data if success else []
+        except Exception as e:
+            self.log_test(f"Videos API - GET /videos/{cert_id}", False, str(e))
+            return False, []
+
+    def test_video_watch_api(self, video_id):
+        """Test getting single video details"""
+        try:
+            response = requests.get(f"{self.api_url}/videos/watch/{video_id}", timeout=10)
+            success = response.status_code == 200
+            details = f"Status: {response.status_code}"
+            if success:
+                data = response.json()
+                required_fields = ['video_id', 'title', 'description', 'youtube_url']
+                missing_fields = [field for field in required_fields if field not in data]
+                if missing_fields:
+                    success = False
+                    details += f", Missing fields: {missing_fields}"
+                else:
+                    details += f", Video: {data.get('title', 'N/A')}"
+            self.log_test(f"Videos API - GET /videos/watch/{video_id}", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Videos API - GET /videos/watch/{video_id}", False, str(e))
+            return False
+
+    def test_video_complete_api(self):
+        """Test marking video as complete (requires auth)"""
+        try:
+            response = requests.post(f"{self.api_url}/videos/test-video-id/complete", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test("Videos API - POST /videos/{video_id}/complete (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test("Videos API - POST /videos/{video_id}/complete (auth protection)", False, str(e))
+            return False
+
+    def test_video_progress_api(self, cert_id="aws-saa-c03"):
+        """Test getting video progress (requires auth)"""
+        try:
+            response = requests.get(f"{self.api_url}/videos/{cert_id}/progress", timeout=10)
+            success = response.status_code == 401  # Should require auth
+            details = f"Status: {response.status_code} (Expected: 401 without auth)"
+            self.log_test(f"Videos API - GET /videos/{cert_id}/progress (auth protection)", success, details)
+            return success
+        except Exception as e:
+            self.log_test(f"Videos API - GET /videos/{cert_id}/progress (auth protection)", False, str(e))
+            return False
+
     def run_all_tests(self):
         """Run all backend API tests"""
         print("🚀 Starting SkillTrack365 Backend API Tests")
