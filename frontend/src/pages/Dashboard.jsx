@@ -344,26 +344,157 @@ export default function Dashboard() {
             <div className="flex flex-col md:flex-row md:items-center gap-4">
               <div className="flex-1">
                 <h3 className="text-lg font-semibold mb-1 flex items-center gap-2">
-                  <LuZap className="w-5 h-5 text-cyan-400" />
-                  Next Best Action
+                  <LuSparkles className="w-5 h-5 text-cyan-400" />
+                  Smart Next Action
                 </h3>
-                <p className="text-zinc-400">
-                  {certifications[0]?.labs_completed < certifications[0]?.labs_total
-                    ? `Complete more labs for ${certifications[0]?.cert_name} to build practical skills.`
-                    : certifications[0]?.assessments_passed < certifications[0]?.assessments_total
-                    ? `Take an assessment for ${certifications[0]?.cert_name} to validate your knowledge.`
-                    : `Start a project for ${certifications[0]?.cert_name} to prove your capabilities.`
-                  }
+                {recommendations ? (
+                  <div>
+                    <p className="text-zinc-400 mb-2">
+                      {recommendations.action_reason}
+                    </p>
+                    {recommendations.primary_action === "lab" && recommendations.next_lab && (
+                      <div className="flex items-center gap-2 text-sm text-cyan-300">
+                        <LuTerminal className="w-4 h-4" />
+                        <span>Recommended: {recommendations.next_lab.title}</span>
+                      </div>
+                    )}
+                    {recommendations.primary_action === "assessment" && recommendations.next_assessment && (
+                      <div className="flex items-center gap-2 text-sm text-indigo-300">
+                        <LuFileText className="w-4 h-4" />
+                        <span>Recommended: {recommendations.next_assessment.title}</span>
+                      </div>
+                    )}
+                    {recommendations.primary_action === "project" && recommendations.next_project && (
+                      <div className="flex items-center gap-2 text-sm text-emerald-300">
+                        <LuFolderKanban className="w-4 h-4" />
+                        <span>Recommended: {recommendations.next_project.title}</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-zinc-400">
+                    {certifications[0]?.labs_completed < certifications[0]?.labs_total
+                      ? `Complete more labs for ${certifications[0]?.cert_name} to build practical skills.`
+                      : certifications[0]?.assessments_passed < certifications[0]?.assessments_total
+                      ? `Take an assessment for ${certifications[0]?.cert_name} to validate your knowledge.`
+                      : `Start a project for ${certifications[0]?.cert_name} to prove your capabilities.`
+                    }
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => navigate(`/certification/${certifications[0]?.cert_id}/roadmap`)}
+                  variant="outline"
+                  className="border-cyan-500/30 hover:bg-cyan-500/10"
+                >
+                  <LuMap className="w-4 h-4 mr-2" />
+                  View Roadmap
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (recommendations?.primary_action === "lab" && recommendations.next_lab) {
+                      navigate(`/lab/${recommendations.next_lab.lab_id}`);
+                    } else if (recommendations?.primary_action === "assessment" && recommendations.next_assessment) {
+                      navigate(`/assessment/${recommendations.next_assessment.assessment_id}`, { state: { certId: certifications[0]?.cert_id } });
+                    } else if (recommendations?.primary_action === "project" && recommendations.next_project) {
+                      navigate(`/project/${recommendations.next_project.project_id}`, { state: { certId: certifications[0]?.cert_id } });
+                    } else {
+                      navigate(`/certification/${certifications[0]?.cert_id}`);
+                    }
+                  }}
+                  className="bg-cyan-500 hover:bg-cyan-400 text-zinc-950 shrink-0"
+                >
+                  Start Now
+                  <LuArrowRight className="ml-2 w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Skill Gap Heatmap */}
+        {recommendations && Object.keys(recommendations.domain_scores || {}).length > 0 && (
+          <div className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-6 mt-6">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <LuTarget className="w-5 h-5 text-amber-400" />
+              Skill Gap Heatmap
+              <Badge variant="outline" className="text-xs ml-2">
+                {recommendations.certification?.name}
+              </Badge>
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {Object.entries(recommendations.domain_scores).map(([domain, score]) => (
+                <div
+                  key={domain}
+                  className="p-3 bg-zinc-800/50 rounded-lg cursor-pointer hover:bg-zinc-800 transition-all"
+                  onClick={() => navigate(`/certification/${recommendations.certification?.cert_id}/labs`)}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium truncate pr-2">{domain}</span>
+                    <span className={`text-sm font-bold ${getDomainTextColor(score)}`}>
+                      {score}%
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-zinc-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${getDomainColor(score)} transition-all`}
+                      style={{ width: `${score}%` }}
+                    />
+                  </div>
+                  {score < 40 && (
+                    <div className="flex items-center gap-1 mt-2 text-xs text-red-400">
+                      <LuAlertTriangle className="w-3 h-3" />
+                      Needs attention
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {recommendations.weak_domains?.length > 0 && (
+              <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                <p className="text-sm text-amber-300">
+                  <LuAlertTriangle className="w-4 h-4 inline mr-2" />
+                  Focus areas: {recommendations.weak_domains.join(", ")}
                 </p>
               </div>
-              <Button
-                onClick={() => navigate(`/certification/${certifications[0]?.cert_id}`)}
-                className="bg-cyan-500 hover:bg-cyan-400 text-zinc-950 shrink-0"
+            )}
+          </div>
+        )}
+
+        {/* Engagement Nudges */}
+        {engagement?.nudges?.length > 0 && (
+          <div className="mt-6 space-y-3">
+            {engagement.nudges.slice(0, 2).map((nudge, index) => (
+              <div
+                key={index}
+                className={`p-4 rounded-xl border ${
+                  nudge.priority === "high"
+                    ? "bg-amber-500/10 border-amber-500/30"
+                    : "bg-zinc-900/40 border-zinc-800"
+                }`}
               >
-                Continue Learning
-                <LuArrowRight className="ml-2 w-4 h-4" />
-              </Button>
-            </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-medium">{nudge.title}</h4>
+                    <p className="text-sm text-zinc-400">{nudge.message}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (nudge.cert_id) {
+                        navigate(`/certification/${nudge.cert_id}`);
+                      } else {
+                        navigate("/hub");
+                      }
+                    }}
+                    className={nudge.priority === "high" ? "bg-amber-500 hover:bg-amber-400 text-zinc-950" : ""}
+                  >
+                    {nudge.action}
+                  </Button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
