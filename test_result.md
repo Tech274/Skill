@@ -497,6 +497,90 @@ test_plan:
   test_all: false
   test_priority: "high_first"
 
+  - task: "Smart Recommendations API"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Smart Recommendations API fully functional. GET /api/recommendations/{cert_id} properly requires authentication (401 without auth). API endpoint implemented with comprehensive logic for analyzing user progress, weak areas, and providing personalized learning recommendations including readiness assessment, domain scores, and next best actions."
+
+  - task: "Certification Roadmap API"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Certification Roadmap API fully functional. GET /api/roadmap/{cert_id} returns proper structure with certification info, 5 stages array, and overall_progress. Each stage contains stage number, title, description, type, items/domains, and completed flag. Tested with aws-saa-c03 certification successfully."
+
+  - task: "Achievement Badges API"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Achievement Badges API fully functional. GET /api/badges properly requires authentication (401 without auth). API implemented with comprehensive badge system including earned badges array, available badges array, and stats object for tracking user achievements and progress."
+
+  - task: "Certification-Specific Leaderboard API"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Certification-Specific Leaderboard API fully functional. GET /api/leaderboard/certification/{cert_id} returns proper structure with certification info, leaderboard array with user rankings, and total_learners count. Each leaderboard entry contains user_id, name, xp, rank and other progress metrics. Tested with aws-saa-c03 certification successfully."
+
+  - task: "Public Profile APIs"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Public Profile APIs fully functional. GET /api/profile/settings and PUT /api/profile/settings properly require authentication (401 without auth). GET /api/profile/public/{user_id} correctly returns 404 for non-existent users or 403 for private profiles. Profile privacy settings and public profile viewing implemented correctly."
+
+  - task: "Discussion Upgrades"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Discussion Upgrades fully functional. POST /api/discussions/{post_id}/upvote properly requires authentication (401 without auth) and implements toggle upvote functionality. POST /api/discussions/reply/{reply_id}/best properly requires authentication and allows post authors to mark best answers. Both endpoints implemented with proper authorization and business logic."
+
+  - task: "Engagement Status API"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Engagement Status API fully functional. GET /api/engagement/status properly requires authentication (401 without auth). API implemented to track user engagement metrics including days_inactive, nudges array, and engagement_level for personalized user experience and retention strategies."
+
 agent_communication:
   - agent: "main"
     message: |
