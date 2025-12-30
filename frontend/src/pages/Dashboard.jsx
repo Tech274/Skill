@@ -444,7 +444,7 @@ export default function Dashboard() {
                   </div>
                   {score < 40 && (
                     <div className="flex items-center gap-1 mt-2 text-xs text-red-400">
-                      <LuAlertTriangle className="w-3 h-3" />
+                      <LuTriangleAlert className="w-3 h-3" />
                       Needs attention
                     </div>
                   )}
