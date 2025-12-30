@@ -268,15 +268,18 @@ backend:
 
   - task: "Discussion Forums"
     implemented: true
-    working: NA
+    working: true
     file: "server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: NA
         agent: "main"
         comment: "New feature - needs testing. Endpoints: GET/POST /api/discussions, GET /api/discussions/post/{id}, POST /api/discussions/reply, POST /api/discussions/{id}/like"
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Discussion Forums API fully functional. All endpoints working: GET /api/discussions/{cert_id} returns proper structure with posts array, total, page, pages. POST endpoints properly require authentication. GET /api/discussions/post/{post_id} returns post with replies. Authentication protection verified for POST /api/discussions, POST /api/discussions/reply, POST /api/discussions/{post_id}/like."
 
   - task: "Video Content"
     implemented: true
