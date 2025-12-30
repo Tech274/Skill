@@ -17,7 +17,15 @@ import {
   LuCrown,
   LuExternalLink,
   LuLoaderCircle,
+  LuTwitter,
+  LuLinkedin,
 } from "react-icons/lu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 import { FaAws } from "react-icons/fa";
 import { VscAzure } from "react-icons/vsc";
 import { SiGooglecloud } from "react-icons/si";
