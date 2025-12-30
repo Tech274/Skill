@@ -2847,7 +2847,7 @@ async def get_projects_catalog(
         }
     }
 
-@api_router.get("/assessments/catalog")
+@api_router.get("/catalog/assessments")
 async def get_assessments_catalog(
     request: Request,
     search: Optional[str] = None,
