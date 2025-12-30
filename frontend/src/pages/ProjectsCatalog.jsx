@@ -72,7 +72,7 @@ export default function ProjectsCatalog() {
       params.append("page", page.toString());
       params.append("limit", "12");
 
-      const response = await axios.get(`${API}/projects/catalog?${params.toString()}`, { withCredentials: true });
+      const response = await axios.get(`${API}/catalog/projects?${params.toString()}`, { withCredentials: true });
       setProjects(response.data.projects);
       setFilters(response.data.filters);
       setPagination({
