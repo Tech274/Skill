@@ -631,6 +631,39 @@ class SkillTrack365APITester:
             if video_id:
                 self.test_video_watch_api(video_id)
         
+        # Test NEW ENHANCEMENT FEATURES
+        print("\n🚀 Testing NEW ENHANCEMENT FEATURES")
+        
+        # Smart Recommendations API
+        print("Testing Smart Recommendations API...")
+        self.test_smart_recommendations_api("aws-saa-c03")
+        
+        # Certification Roadmap API
+        print("Testing Certification Roadmap API...")
+        self.test_certification_roadmap_api("aws-saa-c03")
+        
+        # Achievement Badges API
+        print("Testing Achievement Badges API...")
+        self.test_achievement_badges_api()
+        
+        # Certification-Specific Leaderboard API
+        print("Testing Certification-Specific Leaderboard API...")
+        self.test_certification_leaderboard_api("aws-saa-c03")
+        
+        # Public Profile APIs
+        print("Testing Public Profile APIs...")
+        self.test_profile_settings_api()
+        self.test_public_profile_api("test-user-id")
+        
+        # Discussion Upgrades
+        print("Testing Discussion Upgrades...")
+        self.test_discussion_upvote_api("test-post-id")
+        self.test_discussion_best_answer_api("test-reply-id")
+        
+        # Engagement Status API
+        print("Testing Engagement Status API...")
+        self.test_engagement_status_api()
+        
         # Test auth protection
         print("\n🔒 Testing Authentication Protection")
         self.test_auth_endpoints_without_auth()
