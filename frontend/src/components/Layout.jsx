@@ -33,9 +33,9 @@ import { Badge } from "./ui/badge";
 
 const navItems = [
   { icon: LuGraduationCap, label: "Certification Hub", path: "/hub" },
-  { icon: LuTerminal, label: "Cloud Labs", path: "/hub", badge: null },
-  { icon: LuFileText, label: "Assessments", path: "/hub" },
-  { icon: LuFolderKanban, label: "Projects", path: "/hub" },
+  { icon: LuTerminal, label: "Cloud Labs", path: "/labs", badge: null },
+  { icon: LuFileText, label: "Assessments", path: "/assessments" },
+  { icon: LuFolderKanban, label: "Projects", path: "/projects" },
   { icon: LuTrophy, label: "Leaderboard", path: "/leaderboard" },
   { icon: LuAward, label: "Badges", path: "/badges" },
   { icon: LuLayoutDashboard, label: "Skilltrack Dashboard", path: "/dashboard" },
