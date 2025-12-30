@@ -2009,6 +2009,677 @@ async def get_share_data(certificate_id: str):
         "linkedin_url": f"https://www.linkedin.com/sharing/share-offsite/"
     }
 
+# ============== SMART LEARNING & RECOMMENDATIONS ==============
+
+@api_router.get("/recommendations/{cert_id}")
+async def get_recommendations(cert_id: str, user: Dict = Depends(require_auth)):
+    """Get smart learning recommendations based on user progress and weak areas"""
+    
+    # Get user progress
+    progress = await db.user_progress.find_one(
+        {"user_id": user["user_id"], "cert_id": cert_id},
+        {"_id": 0}
+    )
+    
+    # Get certification details
+    cert = await db.certifications.find_one({"cert_id": cert_id}, {"_id": 0})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    # Get all labs, assessments, projects
+    labs = await db.labs.find({"cert_id": cert_id}, {"_id": 0, "instructions": 0}).to_list(100)
+    assessments = await db.assessments.find({"cert_id": cert_id}, {"_id": 0, "questions": 0}).to_list(100)
+    projects = await db.projects.find({"cert_id": cert_id}, {"_id": 0, "tasks": 0}).to_list(100)
+    
+    completed_labs = progress.get("labs_completed", []) if progress else []
+    completed_assessments = [a["assessment_id"] for a in progress.get("assessments_completed", [])] if progress else []
+    completed_projects = progress.get("projects_completed", []) if progress else []
+    
+    # Analyze weak areas from assessments
+    weak_domains = {}
+    if progress:
+        for assessment_result in progress.get("assessments_completed", []):
+            for weak_area in assessment_result.get("weak_areas", []):
+                weak_domains[weak_area] = weak_domains.get(weak_area, 0) + 1
+    
+    # Calculate domain scores based on completed work
+    domain_scores = {}
+    domain_labs_total = {}
+    domain_labs_completed = {}
+    
+    for lab in labs:
+        domain = lab.get("exam_domain", "General")
+        domain_labs_total[domain] = domain_labs_total.get(domain, 0) + 1
+        if lab["lab_id"] in completed_labs:
+            domain_labs_completed[domain] = domain_labs_completed.get(domain, 0) + 1
+    
+    for domain in domain_labs_total:
+        completed = domain_labs_completed.get(domain, 0)
+        total = domain_labs_total[domain]
+        # Subtract weakness penalty
+        weakness_penalty = weak_domains.get(domain, 0) * 10
+        score = max(0, int((completed / total) * 100) - weakness_penalty)
+        domain_scores[domain] = min(100, score)
+    
+    # Find next best actions
+    next_lab = None
+    next_assessment = None
+    next_project = None
+    
+    # Prioritize labs in weak domains
+    sorted_domains = sorted(domain_scores.items(), key=lambda x: x[1])
+    for domain, score in sorted_domains:
+        for lab in labs:
+            if lab["lab_id"] not in completed_labs and lab.get("exam_domain") == domain:
+                next_lab = lab
+                break
+        if next_lab:
+            break
+    
+    # If no weak domain lab, find any incomplete lab
+    if not next_lab:
+        for lab in labs:
+            if lab["lab_id"] not in completed_labs:
+                next_lab = lab
+                break
+    
+    # Find next assessment
+    for assessment in assessments:
+        if assessment["assessment_id"] not in completed_assessments:
+            next_assessment = assessment
+            break
+    
+    # Find next project
+    for project in projects:
+        if project["project_id"] not in completed_projects:
+            next_project = project
+            break
+    
+    # Determine primary action based on progress
+    readiness = progress.get("readiness_percentage", 0) if progress else 0
+    labs_ratio = len(completed_labs) / max(len(labs), 1)
+    assessments_ratio = len(completed_assessments) / max(len(assessments), 1)
+    
+    if labs_ratio < 0.5:
+        primary_action = "lab"
+        action_reason = "Build practical skills through hands-on labs"
+    elif assessments_ratio < 0.5:
+        primary_action = "assessment"
+        action_reason = "Validate your knowledge with assessments"
+    elif next_project:
+        primary_action = "project"
+        action_reason = "Apply your skills in real-world projects"
+    else:
+        primary_action = "review"
+        action_reason = "Review weak areas and retake assessments"
+    
+    return {
+        "certification": {
+            "cert_id": cert["cert_id"],
+            "name": cert["name"],
+            "vendor": cert["vendor"]
+        },
+        "readiness": readiness,
+        "domain_scores": domain_scores,
+        "weak_domains": list(weak_domains.keys()),
+        "primary_action": primary_action,
+        "action_reason": action_reason,
+        "next_lab": next_lab,
+        "next_assessment": next_assessment,
+        "next_project": next_project,
+        "progress_summary": {
+            "labs_completed": len(completed_labs),
+            "labs_total": len(labs),
+            "assessments_completed": len(completed_assessments),
+            "assessments_total": len(assessments),
+            "projects_completed": len(completed_projects),
+            "projects_total": len(projects)
+        }
+    }
+
+@api_router.get("/roadmap/{cert_id}")
+async def get_certification_roadmap(cert_id: str, request: Request):
+    """Get certification learning roadmap with progress"""
+    
+    cert = await db.certifications.find_one({"cert_id": cert_id}, {"_id": 0})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    # Get all content
+    labs = await db.labs.find({"cert_id": cert_id}, {"_id": 0, "instructions": 0}).to_list(100)
+    assessments = await db.assessments.find({"cert_id": cert_id}, {"_id": 0, "questions": 0}).to_list(100)
+    projects = await db.projects.find({"cert_id": cert_id}, {"_id": 0, "tasks": 0}).to_list(100)
+    
+    # Get user progress if authenticated
+    user = await get_current_user(request)
+    progress = None
+    if user:
+        progress = await db.user_progress.find_one(
+            {"user_id": user["user_id"], "cert_id": cert_id},
+            {"_id": 0}
+        )
+    
+    completed_labs = progress.get("labs_completed", []) if progress else []
+    completed_assessments = {a["assessment_id"]: a for a in progress.get("assessments_completed", [])} if progress else {}
+    completed_projects = progress.get("projects_completed", []) if progress else []
+    
+    # Group labs by domain
+    labs_by_domain = {}
+    for lab in labs:
+        domain = lab.get("exam_domain", "General")
+        if domain not in labs_by_domain:
+            labs_by_domain[domain] = []
+        lab["completed"] = lab["lab_id"] in completed_labs
+        labs_by_domain[domain].append(lab)
+    
+    # Build roadmap stages
+    stages = []
+    
+    # Stage 1: Exam Domains Overview
+    stages.append({
+        "stage": 1,
+        "title": "Exam Domains",
+        "description": "Understand what you'll be tested on",
+        "type": "domains",
+        "items": cert.get("exam_domains", []),
+        "completed": True  # Always show as completed
+    })
+    
+    # Stage 2: Cloud Labs (grouped by domain)
+    domain_stages = []
+    for domain in cert.get("exam_domains", []):
+        domain_name = domain["name"]
+        domain_labs = labs_by_domain.get(domain_name, [])
+        completed_count = sum(1 for l in domain_labs if l.get("completed"))
+        domain_stages.append({
+            "domain": domain_name,
+            "weight": domain["weight"],
+            "labs": domain_labs,
+            "completed_count": completed_count,
+            "total_count": len(domain_labs),
+            "progress": int((completed_count / max(len(domain_labs), 1)) * 100)
+        })
+    
+    stages.append({
+        "stage": 2,
+        "title": "Cloud Labs",
+        "description": "Hands-on practice in simulated environments",
+        "type": "labs",
+        "domains": domain_stages,
+        "total_completed": len(completed_labs),
+        "total_count": len(labs),
+        "completed": len(completed_labs) >= len(labs)
+    })
+    
+    # Stage 3: Assessments
+    assessment_items = []
+    for assessment in assessments:
+        result = completed_assessments.get(assessment["assessment_id"])
+        assessment_items.append({
+            **assessment,
+            "completed": result is not None,
+            "passed": result.get("passed", False) if result else False,
+            "score": result.get("score", 0) if result else 0
+        })
+    
+    passed_count = sum(1 for a in assessment_items if a.get("passed"))
+    stages.append({
+        "stage": 3,
+        "title": "Assessments",
+        "description": "Validate your knowledge with practice tests",
+        "type": "assessments",
+        "items": assessment_items,
+        "passed_count": passed_count,
+        "total_count": len(assessments),
+        "completed": passed_count >= len(assessments)
+    })
+    
+    # Stage 4: Projects
+    project_items = []
+    for project in projects:
+        project_items.append({
+            **project,
+            "completed": project["project_id"] in completed_projects
+        })
+    
+    completed_project_count = len(completed_projects)
+    stages.append({
+        "stage": 4,
+        "title": "Projects",
+        "description": "Apply skills to real-world scenarios",
+        "type": "projects",
+        "items": project_items,
+        "completed_count": completed_project_count,
+        "total_count": len(projects),
+        "completed": completed_project_count >= len(projects)
+    })
+    
+    # Stage 5: Exam Readiness
+    readiness = progress.get("readiness_percentage", 0) if progress else 0
+    stages.append({
+        "stage": 5,
+        "title": "Exam Ready",
+        "description": "You're prepared to take the certification exam!",
+        "type": "readiness",
+        "readiness_percentage": readiness,
+        "completed": readiness >= 80
+    })
+    
+    return {
+        "certification": cert,
+        "stages": stages,
+        "overall_progress": {
+            "readiness": readiness,
+            "current_stage": next((i+1 for i, s in enumerate(stages) if not s.get("completed")), 5)
+        }
+    }
+
+# ============== ACHIEVEMENT BADGES ==============
+
+BADGE_DEFINITIONS = [
+    {"badge_id": "first_lab", "name": "First Steps", "description": "Complete your first lab", "icon": "terminal", "requirement": {"type": "labs", "count": 1}},
+    {"badge_id": "lab_5", "name": "Lab Enthusiast", "description": "Complete 5 labs", "icon": "terminal", "requirement": {"type": "labs", "count": 5}},
+    {"badge_id": "lab_10", "name": "Lab Expert", "description": "Complete 10 labs", "icon": "terminal", "requirement": {"type": "labs", "count": 10}},
+    {"badge_id": "lab_25", "name": "Lab Master", "description": "Complete 25 labs", "icon": "terminal", "requirement": {"type": "labs", "count": 25}},
+    {"badge_id": "first_assessment", "name": "Test Taker", "description": "Pass your first assessment", "icon": "file-text", "requirement": {"type": "assessments", "count": 1}},
+    {"badge_id": "assessment_5", "name": "Assessment Ace", "description": "Pass 5 assessments", "icon": "file-text", "requirement": {"type": "assessments", "count": 5}},
+    {"badge_id": "perfect_score", "name": "Perfect Score", "description": "Score 100% on an assessment", "icon": "star", "requirement": {"type": "perfect_score", "count": 1}},
+    {"badge_id": "first_project", "name": "Builder", "description": "Complete your first project", "icon": "folder", "requirement": {"type": "projects", "count": 1}},
+    {"badge_id": "project_3", "name": "Project Pro", "description": "Complete 3 projects", "icon": "folder", "requirement": {"type": "projects", "count": 3}},
+    {"badge_id": "first_cert", "name": "Certified", "description": "Earn your first certificate", "icon": "award", "requirement": {"type": "certificates", "count": 1}},
+    {"badge_id": "multi_cert", "name": "Multi-Cloud", "description": "Earn certificates in 3+ vendors", "icon": "cloud", "requirement": {"type": "multi_vendor", "count": 3}},
+    {"badge_id": "streak_7", "name": "Weekly Warrior", "description": "7-day learning streak", "icon": "flame", "requirement": {"type": "streak", "count": 7}},
+    {"badge_id": "xp_1000", "name": "Rising Star", "description": "Earn 1000 XP", "icon": "zap", "requirement": {"type": "xp", "count": 1000}},
+    {"badge_id": "xp_5000", "name": "Power Learner", "description": "Earn 5000 XP", "icon": "zap", "requirement": {"type": "xp", "count": 5000}},
+    {"badge_id": "discussion_starter", "name": "Conversation Starter", "description": "Create 5 discussion posts", "icon": "message", "requirement": {"type": "discussions", "count": 5}},
+    {"badge_id": "helper", "name": "Community Helper", "description": "Get 10 likes on your posts/replies", "icon": "heart", "requirement": {"type": "likes_received", "count": 10}},
+]
+
+@api_router.get("/badges")
+async def get_user_badges(user: Dict = Depends(require_auth)):
+    """Get user's earned and available badges"""
+    
+    # Get all user progress
+    all_progress = await db.user_progress.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    
+    # Get certificates
+    certificates = await db.user_certificates.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    
+    # Get discussion stats
+    posts = await db.forum_posts.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+    total_likes = sum(p.get("likes", 0) for p in posts)
+    
+    # Calculate totals
+    total_labs = sum(len(p.get("labs_completed", [])) for p in all_progress)
+    total_assessments_passed = sum(len([a for a in p.get("assessments_completed", []) if a.get("passed")]) for p in all_progress)
+    total_projects = sum(len(p.get("projects_completed", [])) for p in all_progress)
+    perfect_scores = sum(1 for p in all_progress for a in p.get("assessments_completed", []) if a.get("score") == 100)
+    
+    # Calculate XP
+    xp = total_labs * 100 + total_assessments_passed * 150 + total_projects * 200 + len(certificates) * 500
+    
+    # Get unique vendors from certificates
+    vendors = set(c.get("vendor") for c in certificates)
+    
+    # Check which badges are earned
+    earned_badges = []
+    available_badges = []
+    
+    stats = {
+        "labs": total_labs,
+        "assessments": total_assessments_passed,
+        "projects": total_projects,
+        "certificates": len(certificates),
+        "perfect_score": perfect_scores,
+        "multi_vendor": len(vendors),
+        "xp": xp,
+        "discussions": len(posts),
+        "likes_received": total_likes,
+        "streak": 0  # TODO: implement streak tracking
+    }
+    
+    for badge in BADGE_DEFINITIONS:
+        req = badge["requirement"]
+        req_type = req["type"]
+        req_count = req["count"]
+        
+        current_count = stats.get(req_type, 0)
+        is_earned = current_count >= req_count
+        
+        badge_data = {
+            **badge,
+            "earned": is_earned,
+            "progress": min(current_count, req_count),
+            "progress_max": req_count
+        }
+        
+        if is_earned:
+            earned_badges.append(badge_data)
+        else:
+            available_badges.append(badge_data)
+    
+    return {
+        "earned": earned_badges,
+        "available": available_badges,
+        "stats": stats
+    }
+
+# ============== CERTIFICATION-SPECIFIC LEADERBOARDS ==============
+
+@api_router.get("/leaderboard/certification/{cert_id}")
+async def get_certification_leaderboard(cert_id: str, limit: int = 20):
+    """Get leaderboard for a specific certification"""
+    
+    cert = await db.certifications.find_one({"cert_id": cert_id}, {"_id": 0})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    # Get all progress for this certification
+    all_progress = await db.user_progress.find({"cert_id": cert_id}, {"_id": 0}).to_list(1000)
+    
+    # Get user details for all users with progress
+    user_ids = [p["user_id"] for p in all_progress]
+    users = await db.users.find({"user_id": {"$in": user_ids}}, {"_id": 0}).to_list(1000)
+    user_map = {u["user_id"]: u for u in users}
+    
+    # Build leaderboard
+    leaderboard = []
+    for progress in all_progress:
+        user = user_map.get(progress["user_id"], {})
+        labs_completed = len(progress.get("labs_completed", []))
+        assessments_passed = len([a for a in progress.get("assessments_completed", []) if a.get("passed")])
+        projects_completed = len(progress.get("projects_completed", []))
+        
+        # Calculate XP for this cert only
+        xp = labs_completed * 100 + assessments_passed * 150 + projects_completed * 200
+        
+        # Check if user has certificate for this cert
+        certificate = await db.user_certificates.find_one(
+            {"user_id": progress["user_id"], "cert_id": cert_id},
+            {"_id": 0}
+        )
+        if certificate:
+            xp += 500
+        
+        leaderboard.append({
+            "user_id": progress["user_id"],
+            "name": user.get("name", "Unknown"),
+            "picture": user.get("picture"),
+            "xp": xp,
+            "readiness": progress.get("readiness_percentage", 0),
+            "labs_completed": labs_completed,
+            "assessments_passed": assessments_passed,
+            "projects_completed": projects_completed,
+            "has_certificate": certificate is not None
+        })
+    
+    # Sort by XP
+    leaderboard.sort(key=lambda x: x["xp"], reverse=True)
+    
+    # Add ranks
+    for i, entry in enumerate(leaderboard[:limit]):
+        entry["rank"] = i + 1
+    
+    return {
+        "certification": {
+            "cert_id": cert["cert_id"],
+            "name": cert["name"],
+            "vendor": cert["vendor"]
+        },
+        "leaderboard": leaderboard[:limit],
+        "total_learners": len(leaderboard)
+    }
+
+# ============== PUBLIC PROFILES ==============
+
+@api_router.get("/profile/public/{user_id}")
+async def get_public_profile(user_id: str):
+    """Get public profile data for a user"""
+    
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "email": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if profile is public
+    profile_settings = await db.profile_settings.find_one({"user_id": user_id}, {"_id": 0})
+    if not profile_settings or not profile_settings.get("is_public", False):
+        raise HTTPException(status_code=403, detail="Profile is private")
+    
+    # Get all progress
+    all_progress = await db.user_progress.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+    
+    # Get certificates
+    certificates = await db.user_certificates.find(
+        {"user_id": user_id},
+        {"_id": 0, "user_email": 0}
+    ).to_list(100)
+    
+    # Get badges
+    badges_response = await get_user_badges_internal(user_id)
+    
+    # Calculate stats
+    total_labs = sum(len(p.get("labs_completed", [])) for p in all_progress)
+    total_assessments = sum(len([a for a in p.get("assessments_completed", []) if a.get("passed")]) for p in all_progress)
+    total_projects = sum(len(p.get("projects_completed", [])) for p in all_progress)
+    total_xp = total_labs * 100 + total_assessments * 150 + total_projects * 200 + len(certificates) * 500
+    
+    # Get certification names
+    cert_ids = [p["cert_id"] for p in all_progress]
+    certs = await db.certifications.find({"cert_id": {"$in": cert_ids}}, {"_id": 0}).to_list(100)
+    cert_map = {c["cert_id"]: c for c in certs}
+    
+    certifications_progress = []
+    for p in all_progress:
+        cert = cert_map.get(p["cert_id"], {})
+        certifications_progress.append({
+            "cert_id": p["cert_id"],
+            "cert_name": cert.get("name", "Unknown"),
+            "vendor": cert.get("vendor", ""),
+            "readiness": p.get("readiness_percentage", 0)
+        })
+    
+    return {
+        "user": {
+            "user_id": user["user_id"],
+            "name": user["name"],
+            "picture": user.get("picture"),
+            "created_at": user.get("created_at")
+        },
+        "stats": {
+            "total_xp": total_xp,
+            "labs_completed": total_labs,
+            "assessments_passed": total_assessments,
+            "projects_completed": total_projects,
+            "certificates_earned": len(certificates)
+        },
+        "certifications": certifications_progress,
+        "certificates": certificates,
+        "badges": badges_response.get("earned", [])
+    }
+
+async def get_user_badges_internal(user_id: str):
+    """Internal helper to get badges for any user"""
+    all_progress = await db.user_progress.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+    certificates = await db.user_certificates.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+    posts = await db.forum_posts.find({"user_id": user_id}, {"_id": 0}).to_list(1000)
+    total_likes = sum(p.get("likes", 0) for p in posts)
+    
+    total_labs = sum(len(p.get("labs_completed", [])) for p in all_progress)
+    total_assessments_passed = sum(len([a for a in p.get("assessments_completed", []) if a.get("passed")]) for p in all_progress)
+    total_projects = sum(len(p.get("projects_completed", [])) for p in all_progress)
+    perfect_scores = sum(1 for p in all_progress for a in p.get("assessments_completed", []) if a.get("score") == 100)
+    xp = total_labs * 100 + total_assessments_passed * 150 + total_projects * 200 + len(certificates) * 500
+    vendors = set(c.get("vendor") for c in certificates)
+    
+    stats = {
+        "labs": total_labs,
+        "assessments": total_assessments_passed,
+        "projects": total_projects,
+        "certificates": len(certificates),
+        "perfect_score": perfect_scores,
+        "multi_vendor": len(vendors),
+        "xp": xp,
+        "discussions": len(posts),
+        "likes_received": total_likes,
+        "streak": 0
+    }
+    
+    earned_badges = []
+    for badge in BADGE_DEFINITIONS:
+        req = badge["requirement"]
+        if stats.get(req["type"], 0) >= req["count"]:
+            earned_badges.append({**badge, "earned": True})
+    
+    return {"earned": earned_badges, "stats": stats}
+
+@api_router.put("/profile/settings")
+async def update_profile_settings(request: Request, user: Dict = Depends(require_auth)):
+    """Update user profile settings (public/private)"""
+    body = await request.json()
+    is_public = body.get("is_public", False)
+    
+    await db.profile_settings.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"user_id": user["user_id"], "is_public": is_public, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    return {"message": "Settings updated", "is_public": is_public}
+
+@api_router.get("/profile/settings")
+async def get_profile_settings(user: Dict = Depends(require_auth)):
+    """Get user profile settings"""
+    settings = await db.profile_settings.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return settings or {"user_id": user["user_id"], "is_public": False}
+
+# ============== DISCUSSION UPGRADES ==============
+
+@api_router.post("/discussions/{post_id}/upvote")
+async def upvote_discussion(post_id: str, user: Dict = Depends(require_auth)):
+    """Upvote a discussion post"""
+    post = await db.forum_posts.find_one({"post_id": post_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    # Check if already upvoted
+    existing = await db.discussion_votes.find_one(
+        {"post_id": post_id, "user_id": user["user_id"], "type": "upvote"},
+        {"_id": 0}
+    )
+    
+    if existing:
+        # Remove upvote
+        await db.discussion_votes.delete_one({"post_id": post_id, "user_id": user["user_id"], "type": "upvote"})
+        await db.forum_posts.update_one({"post_id": post_id}, {"$inc": {"upvotes": -1}})
+        return {"upvoted": False, "upvotes": max(0, post.get("upvotes", 0) - 1)}
+    else:
+        # Add upvote
+        await db.discussion_votes.insert_one({
+            "vote_id": f"vote_{uuid.uuid4().hex[:12]}",
+            "post_id": post_id,
+            "user_id": user["user_id"],
+            "type": "upvote",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        await db.forum_posts.update_one({"post_id": post_id}, {"$inc": {"upvotes": 1}})
+        return {"upvoted": True, "upvotes": post.get("upvotes", 0) + 1}
+
+@api_router.post("/discussions/reply/{reply_id}/best")
+async def mark_best_answer(reply_id: str, user: Dict = Depends(require_auth)):
+    """Mark a reply as best answer (only post author can do this)"""
+    
+    reply = await db.forum_replies.find_one({"reply_id": reply_id}, {"_id": 0})
+    if not reply:
+        raise HTTPException(status_code=404, detail="Reply not found")
+    
+    post = await db.forum_posts.find_one({"post_id": reply["post_id"]}, {"_id": 0})
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    
+    if post["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only post author can mark best answer")
+    
+    # Clear any existing best answer
+    await db.forum_replies.update_many(
+        {"post_id": reply["post_id"]},
+        {"$set": {"is_best_answer": False}}
+    )
+    
+    # Mark this reply as best
+    await db.forum_replies.update_one(
+        {"reply_id": reply_id},
+        {"$set": {"is_best_answer": True}}
+    )
+    
+    return {"message": "Best answer marked", "reply_id": reply_id}
+
+# ============== DROP-OFF DETECTION ==============
+
+@api_router.get("/engagement/status")
+async def get_engagement_status(user: Dict = Depends(require_auth)):
+    """Get user engagement status and nudges"""
+    
+    # Get last activity
+    last_progress = await db.user_progress.find(
+        {"user_id": user["user_id"]},
+        {"_id": 0}
+    ).sort("updated_at", -1).limit(1).to_list(1)
+    
+    nudges = []
+    days_inactive = 0
+    
+    if last_progress:
+        last_update = last_progress[0].get("updated_at")
+        if last_update:
+            if isinstance(last_update, str):
+                last_update = datetime.fromisoformat(last_update.replace('Z', '+00:00'))
+            if last_update.tzinfo is None:
+                last_update = last_update.replace(tzinfo=timezone.utc)
+            days_inactive = (datetime.now(timezone.utc) - last_update).days
+    else:
+        days_inactive = 999  # Never started
+    
+    # Generate nudges based on inactivity
+    if days_inactive >= 7:
+        nudges.append({
+            "type": "return",
+            "title": "We miss you!",
+            "message": f"It's been {days_inactive} days since your last activity. Jump back in!",
+            "action": "Continue Learning",
+            "priority": "high"
+        })
+    elif days_inactive >= 3:
+        nudges.append({
+            "type": "reminder",
+            "title": "Keep the momentum!",
+            "message": "Don't break your learning streak. Complete a quick lab today!",
+            "action": "Start a Lab",
+            "priority": "medium"
+        })
+    
+    # Check for incomplete certifications
+    all_progress = await db.user_progress.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    
+    for progress in all_progress:
+        readiness = progress.get("readiness_percentage", 0)
+        if 50 <= readiness < 80:
+            cert = await db.certifications.find_one({"cert_id": progress["cert_id"]}, {"_id": 0})
+            if cert:
+                nudges.append({
+                    "type": "finish",
+                    "title": f"Almost there!",
+                    "message": f"You're {readiness}% ready for {cert['name']}. Just a few more steps!",
+                    "action": "Continue",
+                    "cert_id": progress["cert_id"],
+                    "priority": "high" if readiness >= 70 else "medium"
+                })
+    
+    return {
+        "days_inactive": days_inactive,
+        "nudges": nudges,
+        "engagement_level": "high" if days_inactive < 3 else "medium" if days_inactive < 7 else "low"
+    }
+
 @api_router.get("/")
 async def root():
     return {"message": "SkillTrack365 API", "version": "1.0.0"}
