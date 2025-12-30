@@ -77,7 +77,7 @@ export default function AssessmentsCatalog() {
       params.append("page", page.toString());
       params.append("limit", "12");
 
-      const response = await axios.get(`${API}/assessments/catalog?${params.toString()}`, { withCredentials: true });
+      const response = await axios.get(`${API}/catalog/assessments?${params.toString()}`, { withCredentials: true });
       setAssessments(response.data.assessments);
       setFilters(response.data.filters);
       setPagination({
