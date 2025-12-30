@@ -188,3 +188,48 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - Video content uses YouTube embeds
 - All protected routes require Google OAuth authentication
 - Social sharing generates pre-populated share text with certification name and platform branding
+
+## Phase 4: Premium Enhancements (December 30, 2025)
+
+### UX & Smart Learning
+- ✅ **Smart Learning Flow** - AI-powered "Next Best Action" recommendations on Dashboard and Certification Path
+- ✅ **Certification Roadmap View** - Visual 5-stage journey (Domains → Labs → Tests → Projects → Exam Ready)
+- ✅ **Skill Gap Heatmap** - Color-coded domain gaps (red/yellow/green) with click-to-focus functionality
+
+### Engagement & Gamification
+- ✅ **Achievement Badges System** - 16 badges for labs, assessments, projects, streaks, XP milestones
+- ✅ **Certification-Specific Leaderboards** - Per-cert rankings (e.g., "AWS SAA Top Learners")
+- ✅ **Discussion Upgrades** - Upvotes and "Best Answer" marking
+
+### Career & Virality Features
+- ✅ **Public Learner Profiles** - Opt-in public profiles with certs, badges, and progress
+- ✅ **Profile Sharing** - Copy profile link functionality
+
+### Platform Intelligence
+- ✅ **Rule-Based AI Recommendations** - Smart suggestions based on weak domains and past scores
+- ✅ **Drop-Off Detection** - Re-engagement nudges for inactive users (7+ days)
+- ✅ **Engagement Status Tracking** - User activity monitoring and engagement levels
+
+### New API Endpoints
+- `GET /api/recommendations/{cert_id}` - Smart learning recommendations
+- `GET /api/roadmap/{cert_id}` - Certification roadmap with progress
+- `GET /api/badges` - User badges (earned and available)
+- `GET /api/leaderboard/certification/{cert_id}` - Cert-specific leaderboard
+- `GET/PUT /api/profile/settings` - Profile privacy settings
+- `GET /api/profile/public/{user_id}` - Public profile view
+- `POST /api/discussions/{post_id}/upvote` - Toggle upvote
+- `POST /api/discussions/reply/{reply_id}/best` - Mark best answer
+- `GET /api/engagement/status` - Engagement metrics and nudges
+
+### New Frontend Routes
+- `/badges` - Achievement badges page
+- `/certification/:certId/roadmap` - Certification roadmap view
+
+### Badge System
+16 badges across categories:
+- Labs: First Steps (1), Lab Enthusiast (5), Lab Expert (10), Lab Master (25)
+- Assessments: Test Taker (1), Assessment Ace (5), Perfect Score (100%)
+- Projects: Builder (1), Project Pro (3)
+- Certificates: Certified (1), Multi-Cloud (3 vendors)
+- Engagement: Weekly Warrior (7-day streak), Rising Star (1000 XP), Power Learner (5000 XP)
+- Community: Conversation Starter (5 posts), Community Helper (10 likes)
