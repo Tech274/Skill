@@ -72,7 +72,7 @@ export default function LabsCatalog() {
       params.append("page", page.toString());
       params.append("limit", "12");
 
-      const response = await axios.get(`${API}/labs/catalog?${params.toString()}`, { withCredentials: true });
+      const response = await axios.get(`${API}/catalog/labs?${params.toString()}`, { withCredentials: true });
       setLabs(response.data.labs);
       setFilters(response.data.filters);
       setPagination({
