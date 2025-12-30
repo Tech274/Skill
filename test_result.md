@@ -253,15 +253,18 @@ backend:
 
   - task: "Leaderboard"
     implemented: true
-    working: NA
+    working: true
     file: "server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: NA
         agent: "main"
         comment: "New feature - needs testing. GET /api/leaderboard and GET /api/leaderboard/me endpoints implemented"
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Leaderboard API fully functional. GET /api/leaderboard returns top 20 users with XP, rank, labs_completed, assessments_passed, projects_completed, certificates_earned. GET /api/leaderboard/me properly requires authentication. Data structure verified with real user data showing correct XP calculation and ranking."
 
   - task: "Discussion Forums"
     implemented: true
