@@ -15,6 +15,9 @@ import {
   LuTarget,
   LuTrendingUp,
   LuZap,
+  LuAlertTriangle,
+  LuSparkles,
+  LuMap,
 } from "react-icons/lu";
 import { FaAws } from "react-icons/fa";
 import { VscAzure } from "react-icons/vsc";
@@ -43,6 +46,19 @@ const vendorColors = {
   Azure: "#0078D4",
   GCP: "#4285F4",
   DevOps: "#22C55E",
+};
+
+// Helper to get domain score color
+const getDomainColor = (score) => {
+  if (score >= 70) return "bg-emerald-500";
+  if (score >= 40) return "bg-amber-500";
+  return "bg-red-500";
+};
+
+const getDomainTextColor = (score) => {
+  if (score >= 70) return "text-emerald-400";
+  if (score >= 40) return "text-amber-400";
+  return "text-red-400";
 };
 
 export default function Dashboard() {
