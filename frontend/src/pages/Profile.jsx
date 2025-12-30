@@ -7,6 +7,7 @@ import Layout from "../components/Layout";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
+import { Switch } from "../components/ui/switch";
 import {
   LuAward,
   LuDownload,
@@ -19,6 +20,9 @@ import {
   LuLoaderCircle,
   LuTwitter,
   LuLinkedin,
+  LuGlobe,
+  LuLock,
+  LuCopy,
 } from "react-icons/lu";
 import {
   DropdownMenu,
@@ -52,6 +56,8 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [generatingCert, setGeneratingCert] = useState(null);
   const [downloadingCert, setDownloadingCert] = useState(null);
+  const [profileSettings, setProfileSettings] = useState({ is_public: false });
+  const [updatingSettings, setUpdatingSettings] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -59,17 +65,38 @@ export default function Profile() {
 
   const fetchData = async () => {
     try {
-      const [dashboardRes, certsRes] = await Promise.all([
+      const [dashboardRes, certsRes, settingsRes] = await Promise.all([
         axios.get(`${API}/dashboard`, { withCredentials: true }),
         axios.get(`${API}/certificates`, { withCredentials: true }),
+        axios.get(`${API}/profile/settings`, { withCredentials: true }).catch(() => ({ data: { is_public: false } })),
       ]);
       setDashboardData(dashboardRes.data);
       setCertificates(certsRes.data);
+      setProfileSettings(settingsRes.data);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTogglePublic = async (checked) => {
+    setUpdatingSettings(true);
+    try {
+      await axios.put(`${API}/profile/settings`, { is_public: checked }, { withCredentials: true });
+      setProfileSettings({ ...profileSettings, is_public: checked });
+      toast.success(checked ? "Profile is now public!" : "Profile is now private");
+    } catch (error) {
+      toast.error("Failed to update settings");
+    } finally {
+      setUpdatingSettings(false);
+    }
+  };
+
+  const handleShareProfile = () => {
+    const profileUrl = `${window.location.origin}/profile/public/${user?.user_id}`;
+    navigator.clipboard.writeText(profileUrl);
+    toast.success("Profile link copied to clipboard!");
   };
 
   const handleLogout = async () => {
