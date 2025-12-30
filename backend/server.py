@@ -2763,7 +2763,7 @@ async def get_labs_catalog(
         }
     }
 
-@api_router.get("/projects/catalog")
+@api_router.get("/catalog/projects")
 async def get_projects_catalog(
     request: Request,
     search: Optional[str] = None,
