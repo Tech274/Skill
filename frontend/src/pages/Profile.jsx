@@ -133,6 +133,17 @@ export default function Profile() {
     navigate(`/certificate/${certificateId}`);
   };
 
+  const handleShareTwitter = (cert) => {
+    const text = encodeURIComponent(`I just earned my ${cert.vendor} ${cert.cert_name} certification on SkillTrack365! 🎉 #${cert.vendor} #CloudCertification #SkillTrack365`);
+    const url = encodeURIComponent(`${window.location.origin}/certificate/${cert.certificate_id}`);
+    window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, '_blank');
+  };
+
+  const handleShareLinkedIn = (cert) => {
+    const url = encodeURIComponent(`${window.location.origin}/certificate/${cert.certificate_id}`);
+    window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${url}`, '_blank');
+  };
+
   const stats = dashboardData?.stats || {};
   const certifications = dashboardData?.certifications || [];
   const eligibleCerts = certifications.filter((c) => c.readiness_percentage >= 80);
