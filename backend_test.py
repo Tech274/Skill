@@ -426,6 +426,9 @@ class SkillTrack365APITester:
         # Seed data
         self.test_seed_data()
         
+        # Seed video content
+        self.test_seed_videos()
+        
         # Test public endpoints
         success, certifications = self.test_get_certifications()
         
@@ -437,10 +440,41 @@ class SkillTrack365APITester:
             success_assessments, assessments = self.test_get_assessments(cert_id)
             self.test_get_projects(cert_id)
         
+        # Test NEW FEATURES - Leaderboard API
+        print("\n🆕 Testing NEW FEATURES - Leaderboard API")
+        self.test_leaderboard_api()
+        self.test_leaderboard_me_api()
+        
+        # Test NEW FEATURES - Discussion Forums API
+        print("\n🆕 Testing NEW FEATURES - Discussion Forums API")
+        success_discussions, discussions_data = self.test_discussions_api("aws-saa-c03")
+        self.test_discussions_post_api()
+        self.test_discussion_reply_api()
+        self.test_discussion_like_api()
+        
+        # Test discussion post detail if we have posts
+        if success_discussions and discussions_data.get('posts'):
+            post_id = discussions_data['posts'][0].get('post_id')
+            if post_id:
+                self.test_discussion_post_detail_api(post_id)
+        
+        # Test NEW FEATURES - Video Content API
+        print("\n🆕 Testing NEW FEATURES - Video Content API")
+        success_videos, videos_data = self.test_videos_api("aws-saa-c03")
+        self.test_video_complete_api()
+        self.test_video_progress_api("aws-saa-c03")
+        
+        # Test video watch detail if we have videos
+        if success_videos and videos_data:
+            video_id = videos_data[0].get('video_id')
+            if video_id:
+                self.test_video_watch_api(video_id)
+        
         # Test auth protection
+        print("\n🔒 Testing Authentication Protection")
         self.test_auth_endpoints_without_auth()
         
-        # Test new feature endpoints
+        # Test existing feature endpoints
         if success and success_assessments and assessments:
             assessment_id = assessments[0]['assessment_id']
             self.test_assessment_review_endpoint(assessment_id)
