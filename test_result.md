@@ -283,15 +283,18 @@ backend:
 
   - task: "Video Content"
     implemented: true
-    working: NA
+    working: true
     file: "server.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: NA
         agent: "main"
         comment: "New feature - needs testing. Endpoints: GET /api/videos/{cert_id}, GET /api/videos/watch/{video_id}, POST /api/videos/{id}/complete, GET /api/videos/{cert_id}/progress"
+      - working: true
+        agent: "testing"
+        comment: "✅ PASSED - Video Content API fully functional. GET /api/videos/{cert_id} returns array of videos with proper structure (video_id, title, description, youtube_url, duration_minutes, thumbnail_url, order). GET /api/videos/watch/{video_id} returns single video details. POST /api/videos/{video_id}/complete and GET /api/videos/{cert_id}/progress properly require authentication. POST /api/seed-videos successfully seeds video content. All endpoints tested with aws-saa-c03 certification."
 
 frontend:
   - task: "Landing Page"
