@@ -22,7 +22,7 @@ export default function AdminLayout() {
     { name: 'Content', href: '/admin/content', icon: BookOpen },
     { name: 'Labs', href: '/admin/labs', icon: FlaskConical },
     { name: 'Exams', href: '/admin/exams', icon: FileQuestion },
-    { name: 'Finance', href: '/admin/finance', icon: DollarSign },
+    { name: 'Billing', href: '/admin/billing', icon: DollarSign },
     { name: 'Support', href: '/admin/support', icon: MessageSquare },
     { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
     { name: 'Settings', href: '/admin/settings', icon: Settings },

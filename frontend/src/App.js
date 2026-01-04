@@ -39,6 +39,7 @@ import AdminUsers from "./pages/Admin/AdminUsers";
 import AdminContent from "./pages/Admin/AdminContent";
 import AdminLabs from "./pages/Admin/AdminLabs";
 import AdminExams from "./pages/Admin/AdminExams";
+import AdminBilling from "./pages/Admin/AdminBilling";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -238,6 +239,7 @@ const AppRouter = () => {
         <Route path="content" element={<AdminContent />} />
         <Route path="labs" element={<AdminLabs />} />
         <Route path="exams" element={<AdminExams />} />
+        <Route path="billing" element={<AdminBilling />} />
       </Route>
     </Routes>
   );
