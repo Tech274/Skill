@@ -53,10 +53,10 @@ export default function AdminDashboard() {
   const { overview, roles, content, learning, engagement, revenue } = stats;
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-8 space-y-8" data-testid="admin-dashboard">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+        <h1 className="text-3xl font-bold text-gray-900" data-testid="admin-dashboard-title">Admin Dashboard</h1>
         <p className="text-gray-600 mt-2">Manage your learning platform</p>
       </div>
 
