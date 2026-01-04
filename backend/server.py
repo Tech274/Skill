@@ -4149,7 +4149,7 @@ async def create_lab_instance(data: LabInstanceCreate, user: Dict = Depends(requ
     }
     
     await db.lab_instances.insert_one(instance)
-    del instance["_id"] if "_id" in instance else None
+    instance.pop("_id", None)
     
     logger.info(f"User {user['email']} started lab instance: {instance['instance_id']} for lab {data.lab_id}")
     
