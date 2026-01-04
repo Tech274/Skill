@@ -279,11 +279,40 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - `/admin` - Admin Dashboard (protected)
 - `/admin/users` - User Management (protected)
 - `/admin/content` - Content Management (protected)
+- `/admin/labs` - Lab Orchestration (protected)
 
-### Phase 3: Lab & Cloud Orchestration (P1 - Upcoming)
-- [ ] Lab resource management
-- [ ] Quota management
-- [ ] Resource monitoring
+### Phase 3: Lab & Cloud Orchestration (January 4, 2026) ✅
+- ✅ **Lab Instance Management** - Track active lab sessions across all users
+- ✅ **Provider-Agnostic Interface** - Support for AWS, GCP, Azure (simulated)
+- ✅ **Resource Quota Management** - Per-user quotas for concurrent labs, daily/monthly hours
+- ✅ **Lab Status Monitoring** - Active, suspended, terminated states with admin controls
+- ✅ **Admin Dashboard** - Overview stats (running instances, costs, resource usage)
+- ✅ **Instance Filters** - Filter by status (running/suspended/terminated) and provider
+- ✅ **Instance Actions** - Suspend, resume, terminate, extend lab instances
+- ✅ **Quota Editor** - Configure user limits for providers, instance types, storage
+- ✅ **Provider Management** - Enable/disable cloud providers globally
+
+### Phase 3 API Endpoints
+- `GET /api/admin/lab-orchestration/dashboard` - Dashboard overview stats
+- `GET /api/admin/lab-orchestration/instances` - List all instances with filters
+- `POST /api/admin/lab-orchestration/instances/{id}/action` - Admin actions on instances
+- `GET /api/admin/lab-orchestration/quotas` - List all user quotas
+- `GET/PUT /api/admin/lab-orchestration/quotas/{user_id}` - Get/update user quota
+- `DELETE /api/admin/lab-orchestration/quotas/{user_id}` - Reset quota to defaults
+- `GET /api/admin/lab-orchestration/providers` - List cloud providers
+- `PUT /api/admin/lab-orchestration/providers/{id}` - Enable/disable provider
+- `GET /api/admin/lab-orchestration/metrics` - Resource usage metrics
+- `GET /api/lab-instances` - User's active lab instances
+- `POST /api/lab-instances` - Create new lab instance
+- `POST /api/lab-instances/{id}/action` - User actions on own instances
+- `GET /api/my-quota` - User's resource quota
+
+### Phase 3 Technical Notes
+- Cloud provisioning is SIMULATED - instances created instantly without real cloud integration
+- Default quota: 2 concurrent labs, 4h daily, 40h monthly, 10GB storage
+- Instance types: small (2 vCPU, 4GB), medium (4 vCPU, 8GB), large (8 vCPU, 16GB)
+- Cost estimation based on provider-specific hourly rates
+- Collections: lab_instances, resource_quotas, cloud_providers
 
 ### Phase 4: Exams & Certifications Admin (Future)
 - [ ] Question bank management
