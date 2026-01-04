@@ -3180,8 +3180,7 @@ async def get_admin_users(
 async def assign_user_role(
     user_id: str,
     role_data: AdminRoleAssignment,
-    request: Request,
-    admin: Dict = Depends(lambda r: require_super_admin(r))
+    admin: Dict = Depends(get_super_admin)
 ):
     """Assign role to a user (super admin only)"""
     
