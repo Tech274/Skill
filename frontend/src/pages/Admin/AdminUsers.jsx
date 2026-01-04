@@ -140,6 +140,7 @@ export default function AdminUsers() {
                   setSearchTerm(e.target.value);
                   setCurrentPage(1);
                 }}
+                data-testid="admin-users-search"
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
@@ -150,6 +151,7 @@ export default function AdminUsers() {
                 setRoleFilter(e.target.value);
                 setCurrentPage(1);
               }}
+              data-testid="admin-users-role-filter"
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             >
               <option value="">All Roles</option>
@@ -167,6 +169,7 @@ export default function AdminUsers() {
                 setStatusFilter(e.target.value);
                 setCurrentPage(1);
               }}
+              data-testid="admin-users-status-filter"
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             >
               <option value="">All Status</option>
@@ -175,7 +178,7 @@ export default function AdminUsers() {
               <option value="premium">Premium</option>
             </select>
 
-            <Button onClick={() => fetchUsers()} className="bg-blue-600 hover:bg-blue-700">
+            <Button onClick={() => fetchUsers()} data-testid="admin-users-refresh" className="bg-blue-600 hover:bg-blue-700">
               Refresh
             </Button>
           </div>
