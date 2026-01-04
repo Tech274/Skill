@@ -5204,6 +5204,695 @@ async def admin_get_cert_domains(cert_id: str, admin: Dict = Depends(get_admin))
     return {"cert_id": cert_id, "domains": domains}
 
 
+# ============== ADMIN BILLING & SUBSCRIPTIONS ==============
+
+# Pydantic models for billing admin
+class PricingPlanCreate(BaseModel):
+    plan_id: str = Field(default_factory=lambda: f"plan_{uuid.uuid4().hex[:12]}")
+    name: str
+    description: str
+    price: float
+    currency: str = "usd"
+    billing_period: str  # monthly, yearly, one_time
+    features: List[str] = []
+    is_active: bool = True
+    is_featured: bool = False
+    stripe_price_id: Optional[str] = None
+    trial_days: int = 0
+    max_users: Optional[int] = None  # For team plans
+    order: int = 0
+
+class PricingPlanUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    billing_period: Optional[str] = None
+    features: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    is_featured: Optional[bool] = None
+    stripe_price_id: Optional[str] = None
+    trial_days: Optional[int] = None
+    max_users: Optional[int] = None
+    order: Optional[int] = None
+
+class SubscriptionUpdate(BaseModel):
+    status: Optional[str] = None  # active, cancelled, paused, expired
+    plan_id: Optional[str] = None
+    expires_at: Optional[str] = None
+    notes: Optional[str] = None
+
+class RefundRequest(BaseModel):
+    reason: str
+    amount: Optional[float] = None  # Partial refund if specified
+
+# Admin Billing Dashboard
+@api_router.get("/admin/billing/dashboard")
+async def admin_billing_dashboard(admin: Dict = Depends(get_admin)):
+    """Get billing dashboard overview"""
+    
+    # Total revenue
+    revenue_pipeline = [
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    revenue_result = await db.payment_transactions.aggregate(revenue_pipeline).to_list(1)
+    total_revenue = revenue_result[0]["total"] if revenue_result else 0
+    
+    # Monthly revenue (current month)
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    monthly_pipeline = [
+        {"$match": {
+            "payment_status": "paid",
+            "created_at": {"$gte": month_start.isoformat()}
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    monthly_result = await db.payment_transactions.aggregate(monthly_pipeline).to_list(1)
+    monthly_revenue = monthly_result[0]["total"] if monthly_result else 0
+    
+    # Subscription counts by status
+    active_subs = await db.users.count_documents({"subscription_status": "premium"})
+    free_users = await db.users.count_documents({"subscription_status": "free"})
+    expired_subs = await db.users.count_documents({"subscription_status": "expired"})
+    
+    # Transaction counts
+    total_transactions = await db.payment_transactions.count_documents({})
+    successful_transactions = await db.payment_transactions.count_documents({"payment_status": "paid"})
+    pending_transactions = await db.payment_transactions.count_documents({"payment_status": "pending"})
+    failed_transactions = await db.payment_transactions.count_documents({"payment_status": {"$in": ["failed", "cancelled"]}})
+    
+    # Revenue by plan
+    plan_revenue_pipeline = [
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {"_id": "$plan", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}}
+    ]
+    plan_revenue = await db.payment_transactions.aggregate(plan_revenue_pipeline).to_list(100)
+    
+    # Revenue trend (last 6 months)
+    six_months_ago = now - timedelta(days=180)
+    trend_pipeline = [
+        {"$match": {"payment_status": "paid", "created_at": {"$gte": six_months_ago.isoformat()}}},
+        {"$addFields": {"month": {"$substr": ["$created_at", 0, 7]}}},
+        {"$group": {"_id": "$month", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}}
+    ]
+    revenue_trend = await db.payment_transactions.aggregate(trend_pipeline).to_list(12)
+    
+    # Active plans count
+    plans_count = await db.pricing_plans.count_documents({"is_active": True})
+    
+    return {
+        "total_revenue": total_revenue,
+        "monthly_revenue": monthly_revenue,
+        "subscriptions": {
+            "active": active_subs,
+            "free": free_users,
+            "expired": expired_subs
+        },
+        "transactions": {
+            "total": total_transactions,
+            "successful": successful_transactions,
+            "pending": pending_transactions,
+            "failed": failed_transactions
+        },
+        "revenue_by_plan": plan_revenue,
+        "revenue_trend": revenue_trend,
+        "active_plans": plans_count
+    }
+
+# Pricing Plans CRUD
+@api_router.get("/admin/billing/plans")
+async def admin_get_pricing_plans(
+    is_active: Optional[bool] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all pricing plans"""
+    query = {}
+    if is_active is not None:
+        query["is_active"] = is_active
+    
+    plans = await db.pricing_plans.find(query, {"_id": 0}).sort("order", 1).to_list(100)
+    return plans
+
+@api_router.get("/admin/billing/plans/{plan_id}")
+async def admin_get_pricing_plan(plan_id: str, admin: Dict = Depends(get_admin)):
+    """Get single pricing plan"""
+    plan = await db.pricing_plans.find_one({"plan_id": plan_id}, {"_id": 0})
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return plan
+
+@api_router.post("/admin/billing/plans")
+async def admin_create_pricing_plan(plan: PricingPlanCreate, admin: Dict = Depends(get_admin)):
+    """Create a new pricing plan"""
+    # Check for duplicate plan_id
+    existing = await db.pricing_plans.find_one({"plan_id": plan.plan_id})
+    if existing:
+        raise HTTPException(status_code=400, detail="Plan ID already exists")
+    
+    plan_data = plan.model_dump()
+    plan_data["created_at"] = datetime.now(timezone.utc).isoformat()
+    plan_data["created_by"] = admin["user_id"]
+    plan_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    
+    await db.pricing_plans.insert_one(plan_data)
+    logger.info(f"Admin {admin['email']} created pricing plan: {plan.name}")
+    
+    return {**plan_data, "_id": None}
+
+@api_router.put("/admin/billing/plans/{plan_id}")
+async def admin_update_pricing_plan(plan_id: str, updates: PricingPlanUpdate, admin: Dict = Depends(get_admin)):
+    """Update a pricing plan"""
+    existing = await db.pricing_plans.find_one({"plan_id": plan_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    
+    update_data = {k: v for k, v in updates.model_dump().items() if v is not None}
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    update_data["updated_by"] = admin["user_id"]
+    
+    await db.pricing_plans.update_one({"plan_id": plan_id}, {"$set": update_data})
+    
+    updated = await db.pricing_plans.find_one({"plan_id": plan_id}, {"_id": 0})
+    logger.info(f"Admin {admin['email']} updated pricing plan: {plan_id}")
+    return updated
+
+@api_router.delete("/admin/billing/plans/{plan_id}")
+async def admin_delete_pricing_plan(plan_id: str, admin: Dict = Depends(get_super_admin)):
+    """Delete a pricing plan (super_admin only)"""
+    existing = await db.pricing_plans.find_one({"plan_id": plan_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    
+    # Check if any active subscriptions use this plan
+    active_subs = await db.subscriptions.count_documents({"plan_id": plan_id, "status": "active"})
+    if active_subs > 0:
+        raise HTTPException(status_code=400, detail=f"Cannot delete plan with {active_subs} active subscriptions")
+    
+    await db.pricing_plans.delete_one({"plan_id": plan_id})
+    logger.info(f"Super admin {admin['email']} deleted pricing plan: {plan_id}")
+    return {"message": "Plan deleted"}
+
+# Subscriptions Management
+@api_router.get("/admin/billing/subscriptions")
+async def admin_get_subscriptions(
+    status: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all subscriptions with filters"""
+    query = {}
+    
+    # Build subscription status filter based on user subscription_status
+    user_query = {}
+    if status == "active":
+        user_query["subscription_status"] = "premium"
+    elif status == "free":
+        user_query["subscription_status"] = "free"
+    elif status == "expired":
+        user_query["subscription_status"] = "expired"
+    
+    if search:
+        user_query["$or"] = [
+            {"email": {"$regex": search, "$options": "i"}},
+            {"name": {"$regex": search, "$options": "i"}}
+        ]
+    
+    total = await db.users.count_documents(user_query)
+    users = await db.users.find(user_query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Enrich with transaction history
+    subscriptions = []
+    for user in users:
+        last_transaction = await db.payment_transactions.find_one(
+            {"user_id": user["user_id"], "payment_status": "paid"},
+            {"_id": 0}
+        )
+        
+        subscriptions.append({
+            "user_id": user["user_id"],
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "subscription_status": user.get("subscription_status", "free"),
+            "subscription_expires_at": user.get("subscription_expires_at"),
+            "last_payment": last_transaction,
+            "created_at": user.get("created_at")
+        })
+    
+    return {
+        "subscriptions": subscriptions,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/billing/subscriptions/{user_id}")
+async def admin_get_subscription_detail(user_id: str, admin: Dict = Depends(get_admin)):
+    """Get detailed subscription info for a user"""
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get all transactions for this user
+    transactions = await db.payment_transactions.find(
+        {"user_id": user_id},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(100)
+    
+    return {
+        "user": {
+            "user_id": user["user_id"],
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "subscription_status": user.get("subscription_status", "free"),
+            "subscription_expires_at": user.get("subscription_expires_at")
+        },
+        "transactions": transactions
+    }
+
+@api_router.put("/admin/billing/subscriptions/{user_id}")
+async def admin_update_subscription(user_id: str, updates: SubscriptionUpdate, admin: Dict = Depends(get_admin)):
+    """Update a user's subscription"""
+    user = await db.users.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    update_data = {}
+    
+    if updates.status:
+        update_data["subscription_status"] = updates.status
+    
+    if updates.expires_at:
+        update_data["subscription_expires_at"] = updates.expires_at
+    
+    if update_data:
+        update_data["subscription_updated_at"] = datetime.now(timezone.utc).isoformat()
+        update_data["subscription_updated_by"] = admin["user_id"]
+        
+        await db.users.update_one({"user_id": user_id}, {"$set": update_data})
+        
+        # Log the action
+        await db.admin_actions.insert_one({
+            "action_id": f"act_{uuid.uuid4().hex[:12]}",
+            "admin_id": admin["user_id"],
+            "action_type": "subscription_update",
+            "target_user_id": user_id,
+            "changes": update_data,
+            "notes": updates.notes,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+    
+    logger.info(f"Admin {admin['email']} updated subscription for user {user_id}")
+    
+    updated_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    return {
+        "user_id": updated_user["user_id"],
+        "email": updated_user.get("email"),
+        "subscription_status": updated_user.get("subscription_status"),
+        "subscription_expires_at": updated_user.get("subscription_expires_at")
+    }
+
+@api_router.post("/admin/billing/subscriptions/{user_id}/extend")
+async def admin_extend_subscription(user_id: str, days: int = 30, admin: Dict = Depends(get_admin)):
+    """Extend a user's subscription by specified days"""
+    user = await db.users.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    current_expires = user.get("subscription_expires_at")
+    if current_expires:
+        if isinstance(current_expires, str):
+            current_expires = datetime.fromisoformat(current_expires.replace('Z', '+00:00'))
+        new_expires = current_expires + timedelta(days=days)
+    else:
+        new_expires = datetime.now(timezone.utc) + timedelta(days=days)
+    
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "subscription_status": "premium",
+            "subscription_expires_at": new_expires.isoformat(),
+            "subscription_updated_at": datetime.now(timezone.utc).isoformat(),
+            "subscription_updated_by": admin["user_id"]
+        }}
+    )
+    
+    # Log the action
+    await db.admin_actions.insert_one({
+        "action_id": f"act_{uuid.uuid4().hex[:12]}",
+        "admin_id": admin["user_id"],
+        "action_type": "subscription_extend",
+        "target_user_id": user_id,
+        "details": {"days_added": days, "new_expires_at": new_expires.isoformat()},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    logger.info(f"Admin {admin['email']} extended subscription for user {user_id} by {days} days")
+    return {"message": f"Subscription extended by {days} days", "new_expires_at": new_expires.isoformat()}
+
+@api_router.post("/admin/billing/subscriptions/{user_id}/cancel")
+async def admin_cancel_subscription(user_id: str, reason: str = "Administrative action", admin: Dict = Depends(get_admin)):
+    """Cancel a user's subscription"""
+    user = await db.users.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "subscription_status": "cancelled",
+            "subscription_cancelled_at": datetime.now(timezone.utc).isoformat(),
+            "subscription_cancelled_by": admin["user_id"],
+            "subscription_cancel_reason": reason
+        }}
+    )
+    
+    # Log the action
+    await db.admin_actions.insert_one({
+        "action_id": f"act_{uuid.uuid4().hex[:12]}",
+        "admin_id": admin["user_id"],
+        "action_type": "subscription_cancel",
+        "target_user_id": user_id,
+        "details": {"reason": reason},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    logger.info(f"Admin {admin['email']} cancelled subscription for user {user_id}")
+    return {"message": "Subscription cancelled"}
+
+# Transactions/Invoices Management
+@api_router.get("/admin/billing/transactions")
+async def admin_get_transactions(
+    status: Optional[str] = None,
+    plan: Optional[str] = None,
+    user_id: Optional[str] = None,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all transactions with filters"""
+    query = {}
+    
+    if status:
+        query["payment_status"] = status
+    if plan:
+        query["plan"] = plan
+    if user_id:
+        query["user_id"] = user_id
+    if start_date:
+        query["created_at"] = {"$gte": start_date}
+    if end_date:
+        if "created_at" in query:
+            query["created_at"]["$lte"] = end_date
+        else:
+            query["created_at"] = {"$lte": end_date}
+    
+    total = await db.payment_transactions.count_documents(query)
+    transactions = await db.payment_transactions.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Enrich with user info
+    for txn in transactions:
+        user = await db.users.find_one({"user_id": txn.get("user_id")}, {"_id": 0, "email": 1, "name": 1})
+        txn["user"] = user
+    
+    return {
+        "transactions": transactions,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/billing/transactions/{transaction_id}")
+async def admin_get_transaction(transaction_id: str, admin: Dict = Depends(get_admin)):
+    """Get single transaction details"""
+    txn = await db.payment_transactions.find_one({"transaction_id": transaction_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    # Get user info
+    user = await db.users.find_one({"user_id": txn.get("user_id")}, {"_id": 0})
+    txn["user"] = user
+    
+    return txn
+
+@api_router.post("/admin/billing/transactions/{transaction_id}/refund")
+async def admin_refund_transaction(transaction_id: str, refund: RefundRequest, admin: Dict = Depends(get_super_admin)):
+    """Process a refund for a transaction (super_admin only)"""
+    txn = await db.payment_transactions.find_one({"transaction_id": transaction_id})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    if txn.get("payment_status") != "paid":
+        raise HTTPException(status_code=400, detail="Can only refund paid transactions")
+    
+    if txn.get("refund_status") == "refunded":
+        raise HTTPException(status_code=400, detail="Transaction already refunded")
+    
+    refund_amount = refund.amount if refund.amount else txn.get("amount")
+    
+    # Update transaction
+    await db.payment_transactions.update_one(
+        {"transaction_id": transaction_id},
+        {"$set": {
+            "refund_status": "refunded",
+            "refund_amount": refund_amount,
+            "refund_reason": refund.reason,
+            "refunded_at": datetime.now(timezone.utc).isoformat(),
+            "refunded_by": admin["user_id"]
+        }}
+    )
+    
+    # If full refund, update user subscription
+    if refund_amount >= txn.get("amount", 0):
+        await db.users.update_one(
+            {"user_id": txn.get("user_id")},
+            {"$set": {
+                "subscription_status": "free",
+                "subscription_expires_at": None
+            }}
+        )
+    
+    # Log the action
+    await db.admin_actions.insert_one({
+        "action_id": f"act_{uuid.uuid4().hex[:12]}",
+        "admin_id": admin["user_id"],
+        "action_type": "refund",
+        "target_transaction_id": transaction_id,
+        "details": {"amount": refund_amount, "reason": refund.reason},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    logger.info(f"Super admin {admin['email']} processed refund for transaction {transaction_id}")
+    return {"message": "Refund processed", "refund_amount": refund_amount}
+
+# Revenue Analytics
+@api_router.get("/admin/billing/analytics")
+async def admin_billing_analytics(
+    period: str = "monthly",  # daily, weekly, monthly, yearly
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """Get detailed billing analytics"""
+    
+    now = datetime.now(timezone.utc)
+    
+    # Default date ranges
+    if not start_date:
+        if period == "daily":
+            start_date = (now - timedelta(days=30)).isoformat()
+        elif period == "weekly":
+            start_date = (now - timedelta(weeks=12)).isoformat()
+        elif period == "monthly":
+            start_date = (now - timedelta(days=365)).isoformat()
+        else:
+            start_date = (now - timedelta(days=365*3)).isoformat()
+    
+    if not end_date:
+        end_date = now.isoformat()
+    
+    # Date format for grouping
+    date_format = {
+        "daily": {"$substr": ["$created_at", 0, 10]},
+        "weekly": {"$substr": ["$created_at", 0, 10]},  # Will group by week later
+        "monthly": {"$substr": ["$created_at", 0, 7]},
+        "yearly": {"$substr": ["$created_at", 0, 4]}
+    }
+    
+    # Revenue over time
+    revenue_pipeline = [
+        {"$match": {"payment_status": "paid", "created_at": {"$gte": start_date, "$lte": end_date}}},
+        {"$addFields": {"period": date_format.get(period, date_format["monthly"])}},
+        {"$group": {
+            "_id": "$period",
+            "revenue": {"$sum": "$amount"},
+            "transactions": {"$sum": 1}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    revenue_over_time = await db.payment_transactions.aggregate(revenue_pipeline).to_list(365)
+    
+    # Plan performance
+    plan_pipeline = [
+        {"$match": {"payment_status": "paid", "created_at": {"$gte": start_date, "$lte": end_date}}},
+        {"$group": {
+            "_id": "$plan",
+            "revenue": {"$sum": "$amount"},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"revenue": -1}}
+    ]
+    plan_performance = await db.payment_transactions.aggregate(plan_pipeline).to_list(20)
+    
+    # Conversion rate (free to paid)
+    total_users = await db.users.count_documents({})
+    paid_users = await db.users.count_documents({"subscription_status": {"$in": ["premium", "expired"]}})
+    conversion_rate = round((paid_users / max(total_users, 1)) * 100, 2)
+    
+    # Churn (expired subscriptions this period)
+    churned = await db.users.count_documents({
+        "subscription_status": "expired",
+        "subscription_expires_at": {"$gte": start_date, "$lte": end_date}
+    })
+    
+    # Average revenue per user (ARPU)
+    total_revenue_result = await db.payment_transactions.aggregate([
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]).to_list(1)
+    total_revenue = total_revenue_result[0]["total"] if total_revenue_result else 0
+    arpu = round(total_revenue / max(paid_users, 1), 2)
+    
+    return {
+        "period": period,
+        "start_date": start_date,
+        "end_date": end_date,
+        "revenue_over_time": revenue_over_time,
+        "plan_performance": plan_performance,
+        "metrics": {
+            "conversion_rate": conversion_rate,
+            "churned_subscriptions": churned,
+            "arpu": arpu,
+            "total_revenue": total_revenue
+        }
+    }
+
+# Seed default pricing plans
+@api_router.post("/admin/billing/seed-plans")
+async def seed_pricing_plans(admin: Dict = Depends(get_admin)):
+    """Seed default pricing plans"""
+    existing = await db.pricing_plans.count_documents({})
+    if existing > 0:
+        return {"message": "Plans already seeded"}
+    
+    default_plans = [
+        {
+            "plan_id": "free",
+            "name": "Free",
+            "description": "Get started with basic features",
+            "price": 0.0,
+            "currency": "usd",
+            "billing_period": "monthly",
+            "features": [
+                "Access to 2 certifications",
+                "5 labs per month",
+                "Community forums",
+                "Basic progress tracking"
+            ],
+            "is_active": True,
+            "is_featured": False,
+            "trial_days": 0,
+            "order": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["user_id"]
+        },
+        {
+            "plan_id": "monthly",
+            "name": "Pro Monthly",
+            "description": "Full access with monthly billing",
+            "price": 29.99,
+            "currency": "usd",
+            "billing_period": "monthly",
+            "features": [
+                "Unlimited certifications",
+                "Unlimited labs",
+                "Practice exams",
+                "Project workspace",
+                "Certificate generation",
+                "Priority support"
+            ],
+            "is_active": True,
+            "is_featured": False,
+            "trial_days": 7,
+            "order": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["user_id"]
+        },
+        {
+            "plan_id": "yearly",
+            "name": "Pro Yearly",
+            "description": "Best value - save 44%!",
+            "price": 199.99,
+            "currency": "usd",
+            "billing_period": "yearly",
+            "features": [
+                "Everything in Pro Monthly",
+                "Save $160/year",
+                "Exclusive badge",
+                "Early access to new features"
+            ],
+            "is_active": True,
+            "is_featured": True,
+            "trial_days": 14,
+            "order": 2,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["user_id"]
+        },
+        {
+            "plan_id": "team",
+            "name": "Team",
+            "description": "For teams and organizations",
+            "price": 499.99,
+            "currency": "usd",
+            "billing_period": "yearly",
+            "features": [
+                "Everything in Pro Yearly",
+                "Up to 10 team members",
+                "Team analytics dashboard",
+                "Admin controls",
+                "Custom learning paths",
+                "Dedicated support"
+            ],
+            "is_active": True,
+            "is_featured": False,
+            "trial_days": 14,
+            "max_users": 10,
+            "order": 3,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["user_id"]
+        }
+    ]
+    
+    await db.pricing_plans.insert_many(default_plans)
+    logger.info(f"Admin {admin['email']} seeded default pricing plans")
+    return {"message": "Default plans seeded", "count": len(default_plans)}
+
+# Public pricing plans endpoint (for checkout page)
+@api_router.get("/pricing/plans")
+async def get_public_pricing_plans():
+    """Get active pricing plans for public display"""
+    plans = await db.pricing_plans.find({"is_active": True}, {"_id": 0}).sort("order", 1).to_list(10)
+    return plans
+
+
 @api_router.get("/")
 async def root():
     return {"message": "SkillTrack365 API", "version": "1.0.0"}
