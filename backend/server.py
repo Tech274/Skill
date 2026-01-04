@@ -4029,6 +4029,529 @@ async def admin_reorder_projects(data: ContentReorderRequest, admin: Dict = Depe
     return {"message": "Projects reordered successfully"}
 
 
+# ============== LAB ORCHESTRATION ROUTES ==============
+
+# Simulated cloud provider data
+CLOUD_PROVIDERS = {
+    "aws": {
+        "provider_id": "aws",
+        "name": "Amazon Web Services",
+        "is_enabled": True,
+        "regions": ["us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"],
+        "resource_types": ["EC2", "Lambda", "S3", "RDS", "EKS"],
+        "instance_types": {
+            "small": {"vcpu": 2, "memory_gb": 4, "cost_per_hour": 0.05},
+            "medium": {"vcpu": 4, "memory_gb": 8, "cost_per_hour": 0.10},
+            "large": {"vcpu": 8, "memory_gb": 16, "cost_per_hour": 0.20}
+        }
+    },
+    "gcp": {
+        "provider_id": "gcp",
+        "name": "Google Cloud Platform",
+        "is_enabled": True,
+        "regions": ["us-central1", "us-east4", "europe-west1", "asia-east1"],
+        "resource_types": ["Compute Engine", "Cloud Functions", "Cloud Storage", "Cloud SQL", "GKE"],
+        "instance_types": {
+            "small": {"vcpu": 2, "memory_gb": 4, "cost_per_hour": 0.04},
+            "medium": {"vcpu": 4, "memory_gb": 8, "cost_per_hour": 0.09},
+            "large": {"vcpu": 8, "memory_gb": 16, "cost_per_hour": 0.18}
+        }
+    },
+    "azure": {
+        "provider_id": "azure",
+        "name": "Microsoft Azure",
+        "is_enabled": True,
+        "regions": ["eastus", "westus2", "northeurope", "southeastasia"],
+        "resource_types": ["Virtual Machines", "Functions", "Blob Storage", "SQL Database", "AKS"],
+        "instance_types": {
+            "small": {"vcpu": 2, "memory_gb": 4, "cost_per_hour": 0.045},
+            "medium": {"vcpu": 4, "memory_gb": 8, "cost_per_hour": 0.095},
+            "large": {"vcpu": 8, "memory_gb": 16, "cost_per_hour": 0.19}
+        }
+    }
+}
+
+DEFAULT_QUOTA = {
+    "max_concurrent_labs": 2,
+    "max_daily_lab_hours": 4.0,
+    "max_monthly_lab_hours": 40.0,
+    "allowed_providers": ["aws", "gcp", "azure"],
+    "allowed_instance_types": ["small", "medium"],
+    "storage_limit_gb": 10
+}
+
+
+# === User-facing Lab Instance Routes ===
+
+@api_router.get("/lab-instances")
+async def get_user_lab_instances(user: Dict = Depends(require_auth)):
+    """Get current user's active lab instances"""
+    instances = await db.lab_instances.find(
+        {"user_id": user["user_id"], "status": {"$in": ["provisioning", "running", "suspended"]}},
+        {"_id": 0}
+    ).to_list(100)
+    return instances
+
+@api_router.post("/lab-instances")
+async def create_lab_instance(data: LabInstanceCreate, user: Dict = Depends(require_auth)):
+    """Create a new lab instance for the current user"""
+    # Check if lab exists
+    lab = await db.labs.find_one({"lab_id": data.lab_id}, {"_id": 0})
+    if not lab:
+        raise HTTPException(status_code=404, detail="Lab not found")
+    
+    # Get user quota
+    quota = await db.resource_quotas.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    if not quota:
+        quota = {**DEFAULT_QUOTA, "user_id": user["user_id"], "current_usage": {}}
+    
+    # Check concurrent lab limit
+    active_instances = await db.lab_instances.count_documents({
+        "user_id": user["user_id"],
+        "status": {"$in": ["provisioning", "running"]}
+    })
+    if active_instances >= quota.get("max_concurrent_labs", 2):
+        raise HTTPException(status_code=400, detail=f"Maximum concurrent labs ({quota.get('max_concurrent_labs', 2)}) reached")
+    
+    # Check provider allowed
+    if data.provider not in quota.get("allowed_providers", ["aws", "gcp", "azure"]):
+        raise HTTPException(status_code=400, detail=f"Provider {data.provider} not allowed for your account")
+    
+    # Check instance type allowed
+    if data.instance_type not in quota.get("allowed_instance_types", ["small", "medium"]):
+        raise HTTPException(status_code=400, detail=f"Instance type {data.instance_type} not allowed for your account")
+    
+    # Get provider config
+    provider_config = CLOUD_PROVIDERS.get(data.provider, CLOUD_PROVIDERS["aws"])
+    instance_config = provider_config["instance_types"].get(data.instance_type, provider_config["instance_types"]["small"])
+    
+    # Create instance (simulated)
+    instance = {
+        "instance_id": f"inst_{uuid.uuid4().hex[:12]}",
+        "user_id": user["user_id"],
+        "lab_id": data.lab_id,
+        "cert_id": lab["cert_id"],
+        "provider": data.provider,
+        "region": data.region,
+        "instance_type": data.instance_type,
+        "status": "running",  # Simulated - instant provisioning
+        "resources": {
+            "vcpu": instance_config["vcpu"],
+            "memory_gb": instance_config["memory_gb"],
+            "storage_gb": 20,
+            "ip_address": f"10.0.{uuid.uuid4().int % 256}.{uuid.uuid4().int % 256}",
+            "console_url": f"https://console.skilltrack365.com/lab/{data.lab_id}"
+        },
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+        "cost_estimate": instance_config["cost_per_hour"] * 2,  # 2 hour estimate
+        "error_message": None
+    }
+    
+    await db.lab_instances.insert_one(instance)
+    del instance["_id"] if "_id" in instance else None
+    
+    logger.info(f"User {user['email']} started lab instance: {instance['instance_id']} for lab {data.lab_id}")
+    
+    return instance
+
+@api_router.post("/lab-instances/{instance_id}/action")
+async def lab_instance_action(instance_id: str, data: LabInstanceAction, user: Dict = Depends(require_auth)):
+    """Perform action on a lab instance (suspend, resume, terminate, extend)"""
+    instance = await db.lab_instances.find_one(
+        {"instance_id": instance_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    if not instance:
+        raise HTTPException(status_code=404, detail="Lab instance not found")
+    
+    if data.action == "suspend":
+        if instance["status"] != "running":
+            raise HTTPException(status_code=400, detail="Can only suspend running instances")
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"status": "suspended"}}
+        )
+        return {"message": "Instance suspended", "status": "suspended"}
+    
+    elif data.action == "resume":
+        if instance["status"] != "suspended":
+            raise HTTPException(status_code=400, detail="Can only resume suspended instances")
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"status": "running"}}
+        )
+        return {"message": "Instance resumed", "status": "running"}
+    
+    elif data.action == "terminate":
+        if instance["status"] == "terminated":
+            raise HTTPException(status_code=400, detail="Instance already terminated")
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {
+                "status": "terminated",
+                "terminated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        return {"message": "Instance terminated", "status": "terminated"}
+    
+    elif data.action == "extend":
+        if instance["status"] not in ["running", "suspended"]:
+            raise HTTPException(status_code=400, detail="Cannot extend terminated instances")
+        new_expires = datetime.now(timezone.utc) + timedelta(hours=2)
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"expires_at": new_expires.isoformat()}}
+        )
+        return {"message": "Instance extended by 2 hours", "expires_at": new_expires.isoformat()}
+    
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+
+@api_router.get("/lab-instances/{instance_id}")
+async def get_lab_instance(instance_id: str, user: Dict = Depends(require_auth)):
+    """Get details of a specific lab instance"""
+    instance = await db.lab_instances.find_one(
+        {"instance_id": instance_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    if not instance:
+        raise HTTPException(status_code=404, detail="Lab instance not found")
+    return instance
+
+@api_router.get("/my-quota")
+async def get_my_quota(user: Dict = Depends(require_auth)):
+    """Get current user's resource quota"""
+    quota = await db.resource_quotas.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    if not quota:
+        return {**DEFAULT_QUOTA, "user_id": user["user_id"], "current_usage": {}}
+    return quota
+
+
+# === Admin Lab Orchestration Routes ===
+
+@api_router.get("/admin/lab-orchestration/dashboard")
+async def admin_lab_dashboard(admin: Dict = Depends(get_admin)):
+    """Get lab orchestration dashboard stats"""
+    # Count instances by status
+    running_count = await db.lab_instances.count_documents({"status": "running"})
+    suspended_count = await db.lab_instances.count_documents({"status": "suspended"})
+    provisioning_count = await db.lab_instances.count_documents({"status": "provisioning"})
+    terminated_today = await db.lab_instances.count_documents({
+        "status": "terminated",
+        "terminated_at": {"$gte": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0).isoformat()}
+    })
+    
+    # Count by provider
+    provider_stats = {}
+    for provider in ["aws", "gcp", "azure"]:
+        count = await db.lab_instances.count_documents({
+            "provider": provider,
+            "status": {"$in": ["running", "suspended", "provisioning"]}
+        })
+        provider_stats[provider] = count
+    
+    # Calculate total resource usage (simulated)
+    total_vcpu = 0
+    total_memory = 0
+    total_cost = 0.0
+    
+    active_instances = await db.lab_instances.find(
+        {"status": {"$in": ["running", "suspended", "provisioning"]}},
+        {"_id": 0}
+    ).to_list(1000)
+    
+    for inst in active_instances:
+        resources = inst.get("resources", {})
+        total_vcpu += resources.get("vcpu", 0)
+        total_memory += resources.get("memory_gb", 0)
+        total_cost += inst.get("cost_estimate", 0)
+    
+    # Users with active labs
+    unique_users = len(set(inst["user_id"] for inst in active_instances))
+    
+    # Recent errors
+    error_instances = await db.lab_instances.find(
+        {"status": "error"},
+        {"_id": 0}
+    ).sort("started_at", -1).to_list(5)
+    
+    return {
+        "instances": {
+            "running": running_count,
+            "suspended": suspended_count,
+            "provisioning": provisioning_count,
+            "terminated_today": terminated_today
+        },
+        "providers": provider_stats,
+        "resources": {
+            "total_vcpu": total_vcpu,
+            "total_memory_gb": total_memory,
+            "estimated_daily_cost": round(total_cost * 12, 2)  # Rough daily estimate
+        },
+        "active_users": unique_users,
+        "recent_errors": error_instances
+    }
+
+@api_router.get("/admin/lab-orchestration/instances")
+async def admin_list_instances(
+    status: Optional[str] = None,
+    provider: Optional[str] = None,
+    user_id: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """List all lab instances with optional filters"""
+    query = {}
+    if status:
+        query["status"] = status
+    if provider:
+        query["provider"] = provider
+    if user_id:
+        query["user_id"] = user_id
+    
+    instances = await db.lab_instances.find(query, {"_id": 0}).sort("started_at", -1).to_list(500)
+    
+    # Enrich with user and lab info
+    for inst in instances:
+        user = await db.users.find_one({"user_id": inst["user_id"]}, {"_id": 0, "email": 1, "name": 1})
+        inst["user"] = user or {"email": "Unknown", "name": "Unknown"}
+        lab = await db.labs.find_one({"lab_id": inst["lab_id"]}, {"_id": 0, "title": 1})
+        inst["lab_title"] = lab.get("title", "Unknown") if lab else "Unknown"
+    
+    return instances
+
+@api_router.post("/admin/lab-orchestration/instances/{instance_id}/action")
+async def admin_instance_action(instance_id: str, data: LabInstanceAction, admin: Dict = Depends(get_admin)):
+    """Admin action on any lab instance"""
+    instance = await db.lab_instances.find_one({"instance_id": instance_id}, {"_id": 0})
+    if not instance:
+        raise HTTPException(status_code=404, detail="Lab instance not found")
+    
+    if data.action == "suspend":
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"status": "suspended"}}
+        )
+        logger.info(f"Admin {admin['email']} suspended instance {instance_id}")
+        return {"message": "Instance suspended by admin", "status": "suspended"}
+    
+    elif data.action == "resume":
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"status": "running"}}
+        )
+        logger.info(f"Admin {admin['email']} resumed instance {instance_id}")
+        return {"message": "Instance resumed by admin", "status": "running"}
+    
+    elif data.action == "terminate":
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {
+                "status": "terminated",
+                "terminated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        logger.info(f"Admin {admin['email']} terminated instance {instance_id}")
+        return {"message": "Instance terminated by admin", "status": "terminated"}
+    
+    elif data.action == "extend":
+        new_expires = datetime.now(timezone.utc) + timedelta(hours=4)  # Admin gets 4 hour extension
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"expires_at": new_expires.isoformat()}}
+        )
+        logger.info(f"Admin {admin['email']} extended instance {instance_id}")
+        return {"message": "Instance extended by admin (4 hours)", "expires_at": new_expires.isoformat()}
+    
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+
+
+# === Quota Management Routes ===
+
+@api_router.get("/admin/lab-orchestration/quotas")
+async def admin_list_quotas(admin: Dict = Depends(get_admin)):
+    """List all user quotas"""
+    quotas = await db.resource_quotas.find({}, {"_id": 0}).to_list(500)
+    
+    # Enrich with user info
+    for q in quotas:
+        user = await db.users.find_one({"user_id": q["user_id"]}, {"_id": 0, "email": 1, "name": 1})
+        q["user"] = user or {"email": "Unknown", "name": "Unknown"}
+        
+        # Calculate current usage
+        active_count = await db.lab_instances.count_documents({
+            "user_id": q["user_id"],
+            "status": {"$in": ["running", "suspended", "provisioning"]}
+        })
+        q["current_active_labs"] = active_count
+    
+    return quotas
+
+@api_router.get("/admin/lab-orchestration/quotas/{user_id}")
+async def admin_get_user_quota(user_id: str, admin: Dict = Depends(get_admin)):
+    """Get quota for a specific user"""
+    quota = await db.resource_quotas.find_one({"user_id": user_id}, {"_id": 0})
+    
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not quota:
+        quota = {**DEFAULT_QUOTA, "user_id": user_id, "current_usage": {}}
+    
+    quota["user"] = {"email": user.get("email"), "name": user.get("name")}
+    
+    # Calculate current usage
+    active_count = await db.lab_instances.count_documents({
+        "user_id": user_id,
+        "status": {"$in": ["running", "suspended", "provisioning"]}
+    })
+    quota["current_active_labs"] = active_count
+    
+    return quota
+
+@api_router.put("/admin/lab-orchestration/quotas/{user_id}")
+async def admin_update_quota(user_id: str, data: QuotaUpdate, admin: Dict = Depends(get_admin)):
+    """Update quota for a specific user"""
+    user = await db.users.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    existing = await db.resource_quotas.find_one({"user_id": user_id})
+    
+    update_data = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if data.max_concurrent_labs is not None:
+        update_data["max_concurrent_labs"] = data.max_concurrent_labs
+    if data.max_daily_lab_hours is not None:
+        update_data["max_daily_lab_hours"] = data.max_daily_lab_hours
+    if data.max_monthly_lab_hours is not None:
+        update_data["max_monthly_lab_hours"] = data.max_monthly_lab_hours
+    if data.allowed_providers is not None:
+        update_data["allowed_providers"] = data.allowed_providers
+    if data.allowed_instance_types is not None:
+        update_data["allowed_instance_types"] = data.allowed_instance_types
+    if data.storage_limit_gb is not None:
+        update_data["storage_limit_gb"] = data.storage_limit_gb
+    
+    if existing:
+        await db.resource_quotas.update_one(
+            {"user_id": user_id},
+            {"$set": update_data}
+        )
+    else:
+        new_quota = {
+            **DEFAULT_QUOTA,
+            "quota_id": f"quota_{uuid.uuid4().hex[:12]}",
+            "user_id": user_id,
+            **update_data,
+            "current_usage": {}
+        }
+        await db.resource_quotas.insert_one(new_quota)
+    
+    logger.info(f"Admin {admin['email']} updated quota for user {user_id}")
+    return {"message": "Quota updated successfully"}
+
+@api_router.delete("/admin/lab-orchestration/quotas/{user_id}")
+async def admin_reset_quota(user_id: str, admin: Dict = Depends(get_admin)):
+    """Reset user quota to defaults"""
+    await db.resource_quotas.delete_one({"user_id": user_id})
+    logger.info(f"Admin {admin['email']} reset quota for user {user_id} to defaults")
+    return {"message": "Quota reset to defaults"}
+
+
+# === Cloud Provider Management Routes ===
+
+@api_router.get("/admin/lab-orchestration/providers")
+async def admin_list_providers(admin: Dict = Depends(get_admin)):
+    """List all cloud providers with their configurations"""
+    # Check for custom provider settings in DB
+    custom_providers = await db.cloud_providers.find({}, {"_id": 0}).to_list(10)
+    custom_map = {p["provider_id"]: p for p in custom_providers}
+    
+    result = []
+    for pid, provider in CLOUD_PROVIDERS.items():
+        if pid in custom_map:
+            # Merge custom settings
+            merged = {**provider, **custom_map[pid]}
+            result.append(merged)
+        else:
+            result.append(provider)
+    
+    return result
+
+@api_router.put("/admin/lab-orchestration/providers/{provider_id}")
+async def admin_update_provider(provider_id: str, is_enabled: bool, admin: Dict = Depends(get_admin)):
+    """Enable or disable a cloud provider"""
+    if provider_id not in CLOUD_PROVIDERS:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    
+    await db.cloud_providers.update_one(
+        {"provider_id": provider_id},
+        {"$set": {"is_enabled": is_enabled, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    status = "enabled" if is_enabled else "disabled"
+    logger.info(f"Admin {admin['email']} {status} provider {provider_id}")
+    return {"message": f"Provider {provider_id} {status}"}
+
+
+# === Resource Monitoring Routes ===
+
+@api_router.get("/admin/lab-orchestration/metrics")
+async def admin_get_metrics(period: str = "24h", admin: Dict = Depends(get_admin)):
+    """Get resource usage metrics (simulated)"""
+    # Calculate time range
+    hours = 24
+    if period == "7d":
+        hours = 168
+    elif period == "30d":
+        hours = 720
+    
+    start_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+    
+    # Get all instances in the period
+    all_instances = await db.lab_instances.find(
+        {"started_at": {"$gte": start_time.isoformat()}},
+        {"_id": 0}
+    ).to_list(10000)
+    
+    # Calculate metrics
+    total_instances = len(all_instances)
+    total_hours = sum(
+        2 for inst in all_instances  # Each lab session is ~2 hours
+    )
+    
+    # Provider breakdown
+    provider_usage = {}
+    for provider in ["aws", "gcp", "azure"]:
+        count = len([i for i in all_instances if i.get("provider") == provider])
+        provider_usage[provider] = count
+    
+    # Cost estimation
+    total_cost = sum(inst.get("cost_estimate", 0.1) for inst in all_instances)
+    
+    # Hourly breakdown (simulated)
+    hourly_data = []
+    for h in range(min(24, hours)):
+        hour_time = datetime.now(timezone.utc) - timedelta(hours=h)
+        hourly_data.append({
+            "hour": hour_time.isoformat(),
+            "instances": max(0, total_instances // 24 + (1 if h < total_instances % 24 else 0)),
+            "cost": round(total_cost / 24, 2)
+        })
+    
+    return {
+        "period": period,
+        "total_instances": total_instances,
+        "total_lab_hours": total_hours,
+        "estimated_cost": round(total_cost, 2),
+        "provider_usage": provider_usage,
+        "hourly_breakdown": hourly_data[::-1]  # Oldest first
+    }
+
+
 @api_router.get("/")
 async def root():
     return {"message": "SkillTrack365 API", "version": "1.0.0"}
