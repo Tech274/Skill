@@ -3113,13 +3113,12 @@ async def get_admin_dashboard(admin: Dict = Depends(get_admin)):
 
 @api_router.get("/admin/users")
 async def get_admin_users(
-    request: Request,
     page: int = 1,
     limit: int = 20,
     search: Optional[str] = None,
     role: Optional[str] = None,
     status: Optional[str] = None,  # active, suspended, premium
-    admin: Dict = Depends(lambda r: require_admin(r))
+    admin: Dict = Depends(get_admin)
 ):
     """Get paginated list of users with filters"""
     
