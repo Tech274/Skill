@@ -3373,8 +3373,7 @@ async def get_admin_analytics(
 @api_router.get("/admin/users/{user_id}/activity")
 async def get_user_activity(
     user_id: str,
-    request: Request,
-    admin: Dict = Depends(lambda r: require_admin(r))
+    admin: Dict = Depends(get_admin)
 ):
     """Get detailed activity log for a specific user"""
     
