@@ -37,6 +37,7 @@ import AdminLayout from "./components/AdminLayout";
 import AdminDashboard from "./pages/Admin/AdminDashboard";
 import AdminUsers from "./pages/Admin/AdminUsers";
 import AdminContent from "./pages/Admin/AdminContent";
+import AdminLabs from "./pages/Admin/AdminLabs";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
