@@ -217,6 +217,39 @@ async def require_auth(request: Request) -> Dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
 
+
+# Admin authorization helpers
+async def require_admin(request: Request, allowed_roles: List[str] = None) -> Dict:
+    """Require user to be an admin with specific role(s)"""
+    user = await require_auth(request)
+    
+    # Check if user is suspended
+    if user.get("is_suspended", False):
+        raise HTTPException(status_code=403, detail="Account suspended")
+    
+    user_role = user.get("role", "learner")
+    
+    # Super admin has access to everything
+    if user_role == "super_admin":
+        return user
+    
+    # If specific roles are required, check if user has one of them
+    if allowed_roles and user_role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+    # If no specific roles required, just check if user is any type of admin
+    if not allowed_roles:
+        admin_roles = ["super_admin", "content_admin", "lab_admin", "finance_admin", "support_admin"]
+        if user_role not in admin_roles:
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return user
+
+async def require_super_admin(request: Request) -> Dict:
+    """Require user to be a super admin"""
+    return await require_admin(request, allowed_roles=["super_admin"])
+
+
 # ============== AUTH ROUTES ==============
 
 @api_router.post("/auth/session")
