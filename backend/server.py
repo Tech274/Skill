@@ -50,6 +50,11 @@ class UserBase(BaseModel):
     picture: Optional[str] = None
     subscription_status: str = "free"
     subscription_expires_at: Optional[datetime] = None
+    role: str = "learner"  # learner, super_admin, content_admin, lab_admin, finance_admin, support_admin
+    is_suspended: bool = False
+    suspended_reason: Optional[str] = None
+    suspended_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SessionCreate(BaseModel):
@@ -168,6 +173,79 @@ class VideoContentModel(BaseModel):
     thumbnail_url: Optional[str] = None
     order: int = 0
 
+
+# Admin-specific models
+class AdminUserUpdate(BaseModel):
+    role: Optional[str] = None
+    subscription_status: Optional[str] = None
+    is_suspended: Optional[bool] = None
+    suspended_reason: Optional[str] = None
+
+class AdminRoleAssignment(BaseModel):
+    role: str  # super_admin, content_admin, lab_admin, finance_admin, support_admin, learner
+
+
+# ============== LAB ORCHESTRATION MODELS ==============
+
+class CloudProvider(BaseModel):
+    """Cloud provider configuration"""
+    model_config = ConfigDict(extra="ignore")
+    provider_id: str
+    name: str  # AWS, GCP, Azure
+    is_enabled: bool = True
+    regions: List[str] = []
+    resource_types: List[str] = []  # VM, Container, Storage, etc.
+
+class LabInstance(BaseModel):
+    """Active lab instance for a user"""
+    model_config = ConfigDict(extra="ignore")
+    instance_id: str = Field(default_factory=lambda: f"inst_{uuid.uuid4().hex[:12]}")
+    user_id: str
+    lab_id: str
+    cert_id: str
+    provider: str  # aws, gcp, azure
+    region: str
+    status: str = "provisioning"  # provisioning, running, suspended, terminated, error
+    resources: Dict[str, Any] = {}  # Allocated resources
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: Optional[datetime] = None
+    terminated_at: Optional[datetime] = None
+    cost_estimate: float = 0.0
+    error_message: Optional[str] = None
+
+class ResourceQuota(BaseModel):
+    """User resource quota configuration"""
+    model_config = ConfigDict(extra="ignore")
+    quota_id: str = Field(default_factory=lambda: f"quota_{uuid.uuid4().hex[:12]}")
+    user_id: str
+    max_concurrent_labs: int = 2
+    max_daily_lab_hours: float = 4.0
+    max_monthly_lab_hours: float = 40.0
+    allowed_providers: List[str] = ["aws", "gcp", "azure"]
+    allowed_instance_types: List[str] = ["small", "medium"]
+    storage_limit_gb: int = 10
+    current_usage: Dict[str, Any] = {}
+    reset_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class LabInstanceCreate(BaseModel):
+    lab_id: str
+    provider: str = "aws"
+    region: str = "us-east-1"
+    instance_type: str = "small"
+
+class LabInstanceAction(BaseModel):
+    action: str  # suspend, resume, terminate, extend
+
+class QuotaUpdate(BaseModel):
+    max_concurrent_labs: Optional[int] = None
+    max_daily_lab_hours: Optional[float] = None
+    max_monthly_lab_hours: Optional[float] = None
+    allowed_providers: Optional[List[str]] = None
+    allowed_instance_types: Optional[List[str]] = None
+    storage_limit_gb: Optional[int] = None
+
+
 # ============== AUTH HELPERS ==============
 
 async def get_current_user(request: Request) -> Optional[Dict]:
@@ -201,6 +279,52 @@ async def require_auth(request: Request) -> Dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
 
+
+# Admin authorization helpers
+async def require_admin(request: Request, allowed_roles: List[str] = None) -> Dict:
+    """Require user to be an admin with specific role(s)"""
+    user = await require_auth(request)
+    
+    # Check if user is suspended
+    if user.get("is_suspended", False):
+        raise HTTPException(status_code=403, detail="Account suspended")
+    
+    user_role = user.get("role", "learner")
+    
+    # Super admin has access to everything
+    if user_role == "super_admin":
+        return user
+    
+    # If specific roles are required, check if user has one of them
+    if allowed_roles and user_role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    
+    # If no specific roles required, just check if user is any type of admin
+    if not allowed_roles:
+        admin_roles = ["super_admin", "content_admin", "lab_admin", "finance_admin", "support_admin"]
+        if user_role not in admin_roles:
+            raise HTTPException(status_code=403, detail="Admin access required")
+    
+    return user
+
+async def require_super_admin(request: Request) -> Dict:
+    """Require user to be a super admin"""
+    return await require_admin(request, allowed_roles=["super_admin"])
+
+# Dependency functions for FastAPI
+async def get_admin(request: Request) -> Dict:
+    """Dependency to get any admin user"""
+    return await require_admin(request)
+
+async def get_super_admin(request: Request) -> Dict:
+    """Dependency to get super admin user"""
+    return await require_super_admin(request)
+
+async def get_support_or_super_admin(request: Request) -> Dict:
+    """Dependency to get support or super admin user"""
+    return await require_admin(request, allowed_roles=["super_admin", "support_admin"])
+
+
 # ============== AUTH ROUTES ==============
 
 @api_router.post("/auth/session")
@@ -225,14 +349,27 @@ async def create_session(session_data: SessionCreate, response: Response):
     
     if existing_user:
         user_id = existing_user["user_id"]
-        # Update user data
+        # Check if suspended
+        if existing_user.get("is_suspended", False):
+            raise HTTPException(status_code=403, detail=f"Account suspended: {existing_user.get('suspended_reason', 'Contact support')}")
+        
+        # Update user data and last_login
         await db.users.update_one(
             {"user_id": user_id},
-            {"$set": {"name": user_data["name"], "picture": user_data.get("picture")}}
+            {"$set": {
+                "name": user_data["name"], 
+                "picture": user_data.get("picture"),
+                "last_login": datetime.now(timezone.utc).isoformat()
+            }}
         )
     else:
         # Create new user
         user_id = f"user_{uuid.uuid4().hex[:12]}"
+        
+        # Check if this is the first user (make them super_admin)
+        total_users = await db.users.count_documents({})
+        user_role = "super_admin" if total_users == 0 else "learner"
+        
         new_user = {
             "user_id": user_id,
             "email": user_data["email"],
@@ -240,9 +377,17 @@ async def create_session(session_data: SessionCreate, response: Response):
             "picture": user_data.get("picture"),
             "subscription_status": "free",
             "subscription_expires_at": None,
+            "role": user_role,
+            "is_suspended": False,
+            "suspended_reason": None,
+            "suspended_at": None,
+            "last_login": datetime.now(timezone.utc).isoformat(),
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.users.insert_one(new_user)
+        
+        if user_role == "super_admin":
+            logger.info(f"First user created as super_admin: {user_data['email']}")
     
     # Create session
     session_token = f"sess_{uuid.uuid4().hex}"
@@ -643,7 +788,7 @@ async def create_checkout(data: CheckoutRequest, request: Request, user: Dict = 
 
 @api_router.get("/checkout/status/{session_id}")
 async def check_payment_status(session_id: str, user: Dict = Depends(require_auth)):
-    host_url = str(os.environ.get('REACT_APP_BACKEND_URL', 'http://localhost:8001'))
+    host_url = str(os.environ['REACT_APP_BACKEND_URL'])
     webhook_url = f"{host_url}/api/webhook/stripe"
     
     stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url=webhook_url)
@@ -2930,6 +3075,2823 @@ async def get_assessments_catalog(
             "topics": sorted(list(all_topics))
         }
     }
+
+
+
+# ============== ADMIN ROUTES ==============
+
+@api_router.get("/admin/dashboard")
+async def get_admin_dashboard(admin: Dict = Depends(get_admin)):
+    """Get admin dashboard overview statistics"""
+    
+    # User statistics
+    total_users = await db.users.count_documents({})
+    active_users_7d = await db.users.count_documents({
+        "last_login": {"$gte": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()}
+    })
+    suspended_users = await db.users.count_documents({"is_suspended": True})
+    premium_users = await db.users.count_documents({"subscription_status": "premium"})
+    
+    # Role distribution
+    role_distribution = {}
+    for role in ["learner", "super_admin", "content_admin", "lab_admin", "finance_admin", "support_admin"]:
+        count = await db.users.count_documents({"role": role})
+        role_distribution[role] = count
+    
+    # Content statistics
+    total_certifications = await db.certifications.count_documents({})
+    total_labs = await db.labs.count_documents({})
+    total_assessments = await db.assessments.count_documents({})
+    total_projects = await db.projects.count_documents({})
+    total_videos = await db.videos.count_documents({})
+    
+    # Progress statistics
+    total_progress_records = await db.user_progress.count_documents({})
+    avg_readiness_pipeline = [
+        {"$group": {"_id": None, "avg_readiness": {"$avg": "$readiness_percentage"}}}
+    ]
+    avg_readiness_result = await db.user_progress.aggregate(avg_readiness_pipeline).to_list(length=1)
+    avg_readiness = avg_readiness_result[0]["avg_readiness"] if avg_readiness_result else 0
+    
+    # Engagement statistics
+    total_discussions = await db.discussions.count_documents({})
+    total_certificates = await db.certificates.count_documents({})
+    total_badges_earned = await db.user_badges.count_documents({"earned": True})
+    
+    # Recent activity (last 7 days)
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    new_users_7d = await db.users.count_documents({"created_at": {"$gte": seven_days_ago}})
+    new_discussions_7d = await db.discussions.count_documents({"created_at": {"$gte": seven_days_ago}})
+    
+    # Revenue statistics (if finance admin or super admin)
+    revenue_stats = {}
+    if admin.get("role") in ["super_admin", "finance_admin"]:
+        total_transactions = await db.payment_transactions.count_documents({})
+        paid_transactions = await db.payment_transactions.count_documents({"payment_status": "paid"})
+        
+        # Calculate total revenue (assuming $29 monthly, $290 yearly)
+        revenue_pipeline = [
+            {"$match": {"payment_status": "paid"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+        ]
+        revenue_result = await db.payment_transactions.aggregate(revenue_pipeline).to_list(length=1)
+        total_revenue = revenue_result[0]["total"] if revenue_result else 0
+        
+        revenue_stats = {
+            "total_transactions": total_transactions,
+            "paid_transactions": paid_transactions,
+            "total_revenue": total_revenue,
+            "premium_users": premium_users
+        }
+    
+    return {
+        "overview": {
+            "total_users": total_users,
+            "active_users_7d": active_users_7d,
+            "suspended_users": suspended_users,
+            "premium_users": premium_users,
+            "new_users_7d": new_users_7d
+        },
+        "roles": role_distribution,
+        "content": {
+            "certifications": total_certifications,
+            "labs": total_labs,
+            "assessments": total_assessments,
+            "projects": total_projects,
+            "videos": total_videos
+        },
+        "learning": {
+            "total_enrollments": total_progress_records,
+            "avg_readiness_percentage": round(avg_readiness, 2),
+            "total_certificates_issued": total_certificates,
+            "total_badges_earned": total_badges_earned
+        },
+        "engagement": {
+            "total_discussions": total_discussions,
+            "new_discussions_7d": new_discussions_7d
+        },
+        "revenue": revenue_stats
+    }
+
+@api_router.get("/admin/users")
+async def get_admin_users(
+    page: int = 1,
+    limit: int = 20,
+    search: Optional[str] = None,
+    role: Optional[str] = None,
+    status: Optional[str] = None,  # active, suspended, premium
+    admin: Dict = Depends(get_admin)
+):
+    """Get paginated list of users with filters"""
+    
+    query = {}
+    
+    # Search filter
+    if search:
+        query["$or"] = [
+            {"email": {"$regex": search, "$options": "i"}},
+            {"name": {"$regex": search, "$options": "i"}},
+            {"user_id": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Role filter
+    if role:
+        query["role"] = role
+    
+    # Status filter
+    if status == "suspended":
+        query["is_suspended"] = True
+    elif status == "active":
+        query["is_suspended"] = {"$ne": True}
+    elif status == "premium":
+        query["subscription_status"] = "premium"
+    
+    # Get total count
+    total = await db.users.count_documents(query)
+    
+    # Get paginated users
+    skip = (page - 1) * limit
+    users = await db.users.find(query, {"_id": 0}) \
+        .sort("created_at", -1) \
+        .skip(skip) \
+        .limit(limit) \
+        .to_list(length=limit)
+    
+    # Get progress summary for each user
+    for user in users:
+        progress_count = await db.user_progress.count_documents({"user_id": user["user_id"]})
+        user["enrollments_count"] = progress_count
+        
+        # Get total XP
+        xp_pipeline = [
+            {"$match": {"user_id": user["user_id"]}},
+            {"$group": {"_id": None, "total_xp": {"$sum": "$total_xp"}}}
+        ]
+        xp_result = await db.user_progress.aggregate(xp_pipeline).to_list(length=1)
+        user["total_xp"] = xp_result[0]["total_xp"] if xp_result else 0
+    
+    return {
+        "users": users,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit
+    }
+
+@api_router.put("/admin/users/{user_id}/role")
+async def assign_user_role(
+    user_id: str,
+    role_data: AdminRoleAssignment,
+    admin: Dict = Depends(get_super_admin)
+):
+    """Assign role to a user (super admin only)"""
+    
+    valid_roles = ["learner", "super_admin", "content_admin", "lab_admin", "finance_admin", "support_admin"]
+    if role_data.role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}")
+    
+    # Cannot change your own role
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    
+    # Update user role
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"role": role_data.role}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    updated_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    
+    logger.info(f"Admin {admin['email']} changed role of user {user_id} to {role_data.role}")
+    
+    return {
+        "message": "Role updated successfully",
+        "user": updated_user
+    }
+
+@api_router.post("/admin/users/{user_id}/suspend")
+async def suspend_user(
+    user_id: str,
+    reason: str,
+    admin: Dict = Depends(get_support_or_super_admin)
+):
+    """Suspend a user account"""
+    
+    # Cannot suspend yourself
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot suspend your own account")
+    
+    # Cannot suspend other super admins (unless you're also super admin)
+    target_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if target_user.get("role") == "super_admin" and admin.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Cannot suspend super admin")
+    
+    # Suspend user
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "is_suspended": True,
+            "suspended_reason": reason,
+            "suspended_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Invalidate all user sessions
+    await db.user_sessions.delete_many({"user_id": user_id})
+    
+    logger.info(f"Admin {admin['email']} suspended user {user_id}. Reason: {reason}")
+    
+    return {
+        "message": "User suspended successfully",
+        "user_id": user_id,
+        "reason": reason
+    }
+
+@api_router.post("/admin/users/{user_id}/restore")
+async def restore_user(
+    user_id: str,
+    admin: Dict = Depends(get_support_or_super_admin)
+):
+    """Restore a suspended user account"""
+    
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "is_suspended": False,
+            "suspended_reason": None,
+            "suspended_at": None
+        }}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    logger.info(f"Admin {admin['email']} restored user {user_id}")
+    
+    return {
+        "message": "User restored successfully",
+        "user_id": user_id
+    }
+
+@api_router.delete("/admin/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    admin: Dict = Depends(get_super_admin)
+):
+    """Delete a user account permanently (super admin only)"""
+    
+    # Cannot delete yourself
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    # Delete user and all related data
+    await db.users.delete_one({"user_id": user_id})
+    await db.user_sessions.delete_many({"user_id": user_id})
+    await db.user_progress.delete_many({"user_id": user_id})
+    await db.user_badges.delete_many({"user_id": user_id})
+    await db.bookmarks.delete_many({"user_id": user_id})
+    await db.notes.delete_many({"user_id": user_id})
+    await db.certificates.delete_many({"user_id": user_id})
+    await db.discussions.delete_many({"author_id": user_id})
+    await db.payment_transactions.delete_many({"user_id": user_id})
+    
+    logger.warning(f"Admin {admin['email']} DELETED user {user_id}")
+    
+    return {
+        "message": "User deleted successfully",
+        "user_id": user_id
+    }
+
+@api_router.get("/admin/analytics/overview")
+async def get_admin_analytics(
+    days: int = 30,
+    admin: Dict = Depends(get_admin)
+):
+    """Get platform analytics for the specified time period"""
+    
+    start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    
+    # User growth over time
+    user_growth_pipeline = [
+        {"$match": {"created_at": {"$gte": start_date}}},
+        {"$group": {
+            "_id": {"$substr": ["$created_at", 0, 10]},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    user_growth = await db.users.aggregate(user_growth_pipeline).to_list(length=days)
+    
+    # Active users over time
+    active_users_pipeline = [
+        {"$match": {"last_login": {"$gte": start_date}}},
+        {"$group": {
+            "_id": {"$substr": ["$last_login", 0, 10]},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    active_users = await db.user_progress.aggregate(active_users_pipeline).to_list(length=days)
+    
+    # Content completion rates
+    completion_stats = {
+        "labs": await db.user_progress.count_documents({"labs_completed.0": {"$exists": True}}),
+        "assessments": await db.user_progress.count_documents({"assessments_completed.0": {"$exists": True}}),
+        "projects": await db.user_progress.count_documents({"projects_completed.0": {"$exists": True}})
+    }
+    
+    # Top certifications by enrollment
+    top_certs_pipeline = [
+        {"$group": {"_id": "$cert_id", "enrollments": {"$sum": 1}}},
+        {"$sort": {"enrollments": -1}},
+        {"$limit": 10}
+    ]
+    top_certs = await db.user_progress.aggregate(top_certs_pipeline).to_list(length=10)
+    
+    # Enrich with certification names
+    for cert in top_certs:
+        cert_doc = await db.certifications.find_one({"cert_id": cert["_id"]}, {"_id": 0, "name": 1, "vendor": 1})
+        if cert_doc:
+            cert["name"] = cert_doc["name"]
+            cert["vendor"] = cert_doc["vendor"]
+    
+    return {
+        "period_days": days,
+        "user_growth": user_growth,
+        "active_users": active_users,
+        "completion_stats": completion_stats,
+        "top_certifications": top_certs
+    }
+
+@api_router.get("/admin/users/{user_id}/activity")
+async def get_user_activity(
+    user_id: str,
+    admin: Dict = Depends(get_admin)
+):
+    """Get detailed activity log for a specific user"""
+    
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get all progress records
+    progress = await db.user_progress.find({"user_id": user_id}, {"_id": 0}).to_list(length=100)
+    
+    # Get all certificates
+    certificates = await db.certificates.find({"user_id": user_id}, {"_id": 0}).to_list(length=100)
+    
+    # Get badges
+    badges = await db.user_badges.find_one({"user_id": user_id}, {"_id": 0})
+    
+    # Get discussions
+    discussions = await db.discussions.find({"author_id": user_id}, {"_id": 0}).to_list(length=100)
+    
+    # Get payment transactions (if finance admin or super admin)
+    transactions = []
+    if admin.get("role") in ["super_admin", "finance_admin"]:
+        transactions = await db.payment_transactions.find({"user_id": user_id}, {"_id": 0}).to_list(length=100)
+    
+    return {
+        "user": user,
+        "progress": progress,
+        "certificates": certificates,
+        "badges": badges,
+        "discussions": discussions,
+        "transactions": transactions
+    }
+
+# ============== ADMIN CONTENT MANAGEMENT ==============
+
+# Pydantic models for admin content operations
+class AdminCertificationCreate(BaseModel):
+    vendor: str
+    name: str
+    code: str
+    difficulty: str
+    description: str
+    job_roles: List[str] = []
+    exam_domains: List[Dict[str, Any]] = []
+    image_url: Optional[str] = None
+    order: int = 0
+    category: Optional[str] = None
+    is_published: bool = True
+
+class AdminLabCreate(BaseModel):
+    cert_id: str
+    title: str
+    description: str
+    skill_trained: str
+    exam_domain: str
+    duration_minutes: int
+    difficulty: str
+    instructions: List[Dict[str, Any]] = []
+    prerequisites: List[str] = []
+    order: int = 0
+    is_published: bool = True
+
+class AdminAssessmentCreate(BaseModel):
+    cert_id: str
+    title: str
+    description: str
+    type: str  # domain, full_exam
+    topics: List[str] = []
+    time_minutes: int
+    pass_threshold: int
+    questions: List[Dict[str, Any]] = []
+    order: int = 0
+    is_published: bool = True
+
+class AdminProjectCreate(BaseModel):
+    cert_id: str
+    title: str
+    description: str
+    business_scenario: str
+    technologies: List[str] = []
+    difficulty: str
+    skills_validated: List[str] = []
+    tasks: List[Dict[str, Any]] = []
+    deliverables: List[str] = []
+    order: int = 0
+    is_published: bool = True
+
+class ContentReorderRequest(BaseModel):
+    items: List[Dict[str, Any]]  # [{"id": "...", "order": 0}, ...]
+
+
+# Admin Content Stats
+@api_router.get("/admin/content/stats")
+async def get_admin_content_stats(admin: Dict = Depends(get_admin)):
+    """Get content statistics for admin dashboard"""
+    
+    # Count all content
+    certs_count = await db.certifications.count_documents({})
+    labs_count = await db.labs.count_documents({})
+    assessments_count = await db.assessments.count_documents({})
+    projects_count = await db.projects.count_documents({})
+    videos_count = await db.videos.count_documents({})
+    
+    # Get content by vendor/category
+    certs_by_vendor = {}
+    certs = await db.certifications.find({}, {"_id": 0, "vendor": 1}).to_list(100)
+    for cert in certs:
+        vendor = cert.get("vendor", "Other")
+        certs_by_vendor[vendor] = certs_by_vendor.get(vendor, 0) + 1
+    
+    # Get content usage stats
+    total_lab_completions = await db.user_progress.aggregate([
+        {"$project": {"labs_count": {"$size": {"$ifNull": ["$labs_completed", []]}}}},
+        {"$group": {"_id": None, "total": {"$sum": "$labs_count"}}}
+    ]).to_list(1)
+    
+    total_assessment_completions = await db.user_progress.aggregate([
+        {"$project": {"assess_count": {"$size": {"$ifNull": ["$assessments_completed", []]}}}},
+        {"$group": {"_id": None, "total": {"$sum": "$assess_count"}}}
+    ]).to_list(1)
+    
+    total_project_completions = await db.user_progress.aggregate([
+        {"$project": {"proj_count": {"$size": {"$ifNull": ["$projects_completed", []]}}}},
+        {"$group": {"_id": None, "total": {"$sum": "$proj_count"}}}
+    ]).to_list(1)
+    
+    return {
+        "counts": {
+            "certifications": certs_count,
+            "labs": labs_count,
+            "assessments": assessments_count,
+            "projects": projects_count,
+            "videos": videos_count
+        },
+        "by_vendor": certs_by_vendor,
+        "usage": {
+            "lab_completions": total_lab_completions[0]["total"] if total_lab_completions else 0,
+            "assessment_completions": total_assessment_completions[0]["total"] if total_assessment_completions else 0,
+            "project_completions": total_project_completions[0]["total"] if total_project_completions else 0
+        }
+    }
+
+
+# ===== CERTIFICATION CRUD =====
+
+@api_router.get("/admin/certifications")
+async def admin_list_certifications(admin: Dict = Depends(get_admin)):
+    """List all certifications with full details for admin"""
+    certs = await db.certifications.find({}, {"_id": 0}).to_list(100)
+    
+    # Add related content counts
+    for cert in certs:
+        cert["actual_labs_count"] = await db.labs.count_documents({"cert_id": cert["cert_id"]})
+        cert["actual_assessments_count"] = await db.assessments.count_documents({"cert_id": cert["cert_id"]})
+        cert["actual_projects_count"] = await db.projects.count_documents({"cert_id": cert["cert_id"]})
+        cert["actual_videos_count"] = await db.videos.count_documents({"cert_id": cert["cert_id"]})
+    
+    return certs
+
+@api_router.post("/admin/certifications")
+async def admin_create_certification(data: AdminCertificationCreate, admin: Dict = Depends(get_admin)):
+    """Create a new certification"""
+    cert_id = f"cert-{uuid.uuid4().hex[:8]}"
+    
+    certification = {
+        "cert_id": cert_id,
+        "vendor": data.vendor,
+        "name": data.name,
+        "code": data.code,
+        "difficulty": data.difficulty,
+        "description": data.description,
+        "job_roles": data.job_roles,
+        "exam_domains": data.exam_domains,
+        "labs_count": 0,
+        "assessments_count": 0,
+        "projects_count": 0,
+        "image_url": data.image_url,
+        "order": data.order,
+        "category": data.category,
+        "is_published": data.is_published,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["user_id"]
+    }
+    
+    await db.certifications.insert_one(certification)
+    logger.info(f"Admin {admin['email']} created certification: {data.name}")
+    
+    return {"cert_id": cert_id, "message": "Certification created successfully"}
+
+@api_router.put("/admin/certifications/{cert_id}")
+async def admin_update_certification(cert_id: str, data: AdminCertificationCreate, admin: Dict = Depends(get_admin)):
+    """Update an existing certification"""
+    existing = await db.certifications.find_one({"cert_id": cert_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    update_data = {
+        "vendor": data.vendor,
+        "name": data.name,
+        "code": data.code,
+        "difficulty": data.difficulty,
+        "description": data.description,
+        "job_roles": data.job_roles,
+        "exam_domains": data.exam_domains,
+        "image_url": data.image_url,
+        "order": data.order,
+        "category": data.category,
+        "is_published": data.is_published,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": admin["user_id"]
+    }
+    
+    await db.certifications.update_one({"cert_id": cert_id}, {"$set": update_data})
+    logger.info(f"Admin {admin['email']} updated certification: {cert_id}")
+    
+    return {"message": "Certification updated successfully"}
+
+@api_router.delete("/admin/certifications/{cert_id}")
+async def admin_delete_certification(cert_id: str, admin: Dict = Depends(get_admin)):
+    """Delete a certification and optionally its related content"""
+    existing = await db.certifications.find_one({"cert_id": cert_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    # Delete related content
+    await db.labs.delete_many({"cert_id": cert_id})
+    await db.assessments.delete_many({"cert_id": cert_id})
+    await db.projects.delete_many({"cert_id": cert_id})
+    await db.videos.delete_many({"cert_id": cert_id})
+    await db.discussions.delete_many({"cert_id": cert_id})
+    
+    # Delete certification
+    await db.certifications.delete_one({"cert_id": cert_id})
+    
+    logger.warning(f"Admin {admin['email']} DELETED certification: {cert_id} and all related content")
+    
+    return {"message": "Certification and related content deleted successfully"}
+
+
+# ===== LAB CRUD =====
+
+@api_router.get("/admin/labs")
+async def admin_list_labs(
+    cert_id: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """List all labs, optionally filtered by certification"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    
+    labs = await db.labs.find(query, {"_id": 0}).to_list(500)
+    return labs
+
+@api_router.post("/admin/labs")
+async def admin_create_lab(data: AdminLabCreate, admin: Dict = Depends(get_admin)):
+    """Create a new lab"""
+    # Verify certification exists
+    cert = await db.certifications.find_one({"cert_id": data.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    lab_id = f"lab-{uuid.uuid4().hex[:8]}"
+    
+    lab = {
+        "lab_id": lab_id,
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "skill_trained": data.skill_trained,
+        "exam_domain": data.exam_domain,
+        "duration_minutes": data.duration_minutes,
+        "difficulty": data.difficulty,
+        "instructions": data.instructions,
+        "prerequisites": data.prerequisites,
+        "order": data.order,
+        "is_published": data.is_published,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["user_id"]
+    }
+    
+    await db.labs.insert_one(lab)
+    
+    # Update certification lab count
+    await db.certifications.update_one(
+        {"cert_id": data.cert_id},
+        {"$inc": {"labs_count": 1}}
+    )
+    
+    logger.info(f"Admin {admin['email']} created lab: {data.title}")
+    
+    return {"lab_id": lab_id, "message": "Lab created successfully"}
+
+@api_router.put("/admin/labs/{lab_id}")
+async def admin_update_lab(lab_id: str, data: AdminLabCreate, admin: Dict = Depends(get_admin)):
+    """Update an existing lab"""
+    existing = await db.labs.find_one({"lab_id": lab_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Lab not found")
+    
+    # If cert_id changed, update counts
+    old_cert_id = existing.get("cert_id")
+    if old_cert_id != data.cert_id:
+        await db.certifications.update_one({"cert_id": old_cert_id}, {"$inc": {"labs_count": -1}})
+        await db.certifications.update_one({"cert_id": data.cert_id}, {"$inc": {"labs_count": 1}})
+    
+    update_data = {
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "skill_trained": data.skill_trained,
+        "exam_domain": data.exam_domain,
+        "duration_minutes": data.duration_minutes,
+        "difficulty": data.difficulty,
+        "instructions": data.instructions,
+        "prerequisites": data.prerequisites,
+        "order": data.order,
+        "is_published": data.is_published,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": admin["user_id"]
+    }
+    
+    await db.labs.update_one({"lab_id": lab_id}, {"$set": update_data})
+    logger.info(f"Admin {admin['email']} updated lab: {lab_id}")
+    
+    return {"message": "Lab updated successfully"}
+
+@api_router.delete("/admin/labs/{lab_id}")
+async def admin_delete_lab(lab_id: str, admin: Dict = Depends(get_admin)):
+    """Delete a lab"""
+    existing = await db.labs.find_one({"lab_id": lab_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Lab not found")
+    
+    # Update certification lab count
+    await db.certifications.update_one(
+        {"cert_id": existing["cert_id"]},
+        {"$inc": {"labs_count": -1}}
+    )
+    
+    await db.labs.delete_one({"lab_id": lab_id})
+    logger.warning(f"Admin {admin['email']} DELETED lab: {lab_id}")
+    
+    return {"message": "Lab deleted successfully"}
+
+
+# ===== ASSESSMENT CRUD =====
+
+@api_router.get("/admin/assessments")
+async def admin_list_assessments(
+    cert_id: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """List all assessments, optionally filtered by certification"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    
+    assessments = await db.assessments.find(query, {"_id": 0}).to_list(500)
+    return assessments
+
+@api_router.post("/admin/assessments")
+async def admin_create_assessment(data: AdminAssessmentCreate, admin: Dict = Depends(get_admin)):
+    """Create a new assessment"""
+    cert = await db.certifications.find_one({"cert_id": data.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    assessment_id = f"assess-{uuid.uuid4().hex[:8]}"
+    
+    assessment = {
+        "assessment_id": assessment_id,
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "type": data.type,
+        "topics": data.topics,
+        "time_minutes": data.time_minutes,
+        "pass_threshold": data.pass_threshold,
+        "questions": data.questions,
+        "order": data.order,
+        "is_published": data.is_published,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["user_id"]
+    }
+    
+    await db.assessments.insert_one(assessment)
+    
+    await db.certifications.update_one(
+        {"cert_id": data.cert_id},
+        {"$inc": {"assessments_count": 1}}
+    )
+    
+    logger.info(f"Admin {admin['email']} created assessment: {data.title}")
+    
+    return {"assessment_id": assessment_id, "message": "Assessment created successfully"}
+
+@api_router.put("/admin/assessments/{assessment_id}")
+async def admin_update_assessment(assessment_id: str, data: AdminAssessmentCreate, admin: Dict = Depends(get_admin)):
+    """Update an existing assessment"""
+    existing = await db.assessments.find_one({"assessment_id": assessment_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    
+    old_cert_id = existing.get("cert_id")
+    if old_cert_id != data.cert_id:
+        await db.certifications.update_one({"cert_id": old_cert_id}, {"$inc": {"assessments_count": -1}})
+        await db.certifications.update_one({"cert_id": data.cert_id}, {"$inc": {"assessments_count": 1}})
+    
+    update_data = {
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "type": data.type,
+        "topics": data.topics,
+        "time_minutes": data.time_minutes,
+        "pass_threshold": data.pass_threshold,
+        "questions": data.questions,
+        "order": data.order,
+        "is_published": data.is_published,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": admin["user_id"]
+    }
+    
+    await db.assessments.update_one({"assessment_id": assessment_id}, {"$set": update_data})
+    logger.info(f"Admin {admin['email']} updated assessment: {assessment_id}")
+    
+    return {"message": "Assessment updated successfully"}
+
+@api_router.delete("/admin/assessments/{assessment_id}")
+async def admin_delete_assessment(assessment_id: str, admin: Dict = Depends(get_admin)):
+    """Delete an assessment"""
+    existing = await db.assessments.find_one({"assessment_id": assessment_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    
+    await db.certifications.update_one(
+        {"cert_id": existing["cert_id"]},
+        {"$inc": {"assessments_count": -1}}
+    )
+    
+    await db.assessments.delete_one({"assessment_id": assessment_id})
+    logger.warning(f"Admin {admin['email']} DELETED assessment: {assessment_id}")
+    
+    return {"message": "Assessment deleted successfully"}
+
+
+# ===== PROJECT CRUD =====
+
+@api_router.get("/admin/projects")
+async def admin_list_projects(
+    cert_id: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """List all projects, optionally filtered by certification"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    
+    projects = await db.projects.find(query, {"_id": 0}).to_list(500)
+    return projects
+
+@api_router.post("/admin/projects")
+async def admin_create_project(data: AdminProjectCreate, admin: Dict = Depends(get_admin)):
+    """Create a new project"""
+    cert = await db.certifications.find_one({"cert_id": data.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    project_id = f"proj-{uuid.uuid4().hex[:8]}"
+    
+    project = {
+        "project_id": project_id,
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "business_scenario": data.business_scenario,
+        "technologies": data.technologies,
+        "difficulty": data.difficulty,
+        "skills_validated": data.skills_validated,
+        "tasks": data.tasks,
+        "deliverables": data.deliverables,
+        "order": data.order,
+        "is_published": data.is_published,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["user_id"]
+    }
+    
+    await db.projects.insert_one(project)
+    
+    await db.certifications.update_one(
+        {"cert_id": data.cert_id},
+        {"$inc": {"projects_count": 1}}
+    )
+    
+    logger.info(f"Admin {admin['email']} created project: {data.title}")
+    
+    return {"project_id": project_id, "message": "Project created successfully"}
+
+@api_router.put("/admin/projects/{project_id}")
+async def admin_update_project(project_id: str, data: AdminProjectCreate, admin: Dict = Depends(get_admin)):
+    """Update an existing project"""
+    existing = await db.projects.find_one({"project_id": project_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    old_cert_id = existing.get("cert_id")
+    if old_cert_id != data.cert_id:
+        await db.certifications.update_one({"cert_id": old_cert_id}, {"$inc": {"projects_count": -1}})
+        await db.certifications.update_one({"cert_id": data.cert_id}, {"$inc": {"projects_count": 1}})
+    
+    update_data = {
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "business_scenario": data.business_scenario,
+        "technologies": data.technologies,
+        "difficulty": data.difficulty,
+        "skills_validated": data.skills_validated,
+        "tasks": data.tasks,
+        "deliverables": data.deliverables,
+        "order": data.order,
+        "is_published": data.is_published,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": admin["user_id"]
+    }
+    
+    await db.projects.update_one({"project_id": project_id}, {"$set": update_data})
+    logger.info(f"Admin {admin['email']} updated project: {project_id}")
+    
+    return {"message": "Project updated successfully"}
+
+@api_router.delete("/admin/projects/{project_id}")
+async def admin_delete_project(project_id: str, admin: Dict = Depends(get_admin)):
+    """Delete a project"""
+    existing = await db.projects.find_one({"project_id": project_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    await db.certifications.update_one(
+        {"cert_id": existing["cert_id"]},
+        {"$inc": {"projects_count": -1}}
+    )
+    
+    await db.projects.delete_one({"project_id": project_id})
+    logger.warning(f"Admin {admin['email']} DELETED project: {project_id}")
+    
+    return {"message": "Project deleted successfully"}
+
+
+# ===== CONTENT REORDERING =====
+
+@api_router.post("/admin/certifications/reorder")
+async def admin_reorder_certifications(data: ContentReorderRequest, admin: Dict = Depends(get_admin)):
+    """Reorder certifications"""
+    for item in data.items:
+        await db.certifications.update_one(
+            {"cert_id": item["id"]},
+            {"$set": {"order": item["order"]}}
+        )
+    return {"message": "Certifications reordered successfully"}
+
+@api_router.post("/admin/labs/reorder")
+async def admin_reorder_labs(data: ContentReorderRequest, admin: Dict = Depends(get_admin)):
+    """Reorder labs within a certification"""
+    for item in data.items:
+        await db.labs.update_one(
+            {"lab_id": item["id"]},
+            {"$set": {"order": item["order"]}}
+        )
+    return {"message": "Labs reordered successfully"}
+
+@api_router.post("/admin/assessments/reorder")
+async def admin_reorder_assessments(data: ContentReorderRequest, admin: Dict = Depends(get_admin)):
+    """Reorder assessments within a certification"""
+    for item in data.items:
+        await db.assessments.update_one(
+            {"assessment_id": item["id"]},
+            {"$set": {"order": item["order"]}}
+        )
+    return {"message": "Assessments reordered successfully"}
+
+@api_router.post("/admin/projects/reorder")
+async def admin_reorder_projects(data: ContentReorderRequest, admin: Dict = Depends(get_admin)):
+    """Reorder projects within a certification"""
+    for item in data.items:
+        await db.projects.update_one(
+            {"project_id": item["id"]},
+            {"$set": {"order": item["order"]}}
+        )
+    return {"message": "Projects reordered successfully"}
+
+
+# ============== LAB ORCHESTRATION ROUTES ==============
+
+# Simulated cloud provider data
+CLOUD_PROVIDERS = {
+    "aws": {
+        "provider_id": "aws",
+        "name": "Amazon Web Services",
+        "is_enabled": True,
+        "regions": ["us-east-1", "us-west-2", "eu-west-1", "ap-southeast-1"],
+        "resource_types": ["EC2", "Lambda", "S3", "RDS", "EKS"],
+        "instance_types": {
+            "small": {"vcpu": 2, "memory_gb": 4, "cost_per_hour": 0.05},
+            "medium": {"vcpu": 4, "memory_gb": 8, "cost_per_hour": 0.10},
+            "large": {"vcpu": 8, "memory_gb": 16, "cost_per_hour": 0.20}
+        }
+    },
+    "gcp": {
+        "provider_id": "gcp",
+        "name": "Google Cloud Platform",
+        "is_enabled": True,
+        "regions": ["us-central1", "us-east4", "europe-west1", "asia-east1"],
+        "resource_types": ["Compute Engine", "Cloud Functions", "Cloud Storage", "Cloud SQL", "GKE"],
+        "instance_types": {
+            "small": {"vcpu": 2, "memory_gb": 4, "cost_per_hour": 0.04},
+            "medium": {"vcpu": 4, "memory_gb": 8, "cost_per_hour": 0.09},
+            "large": {"vcpu": 8, "memory_gb": 16, "cost_per_hour": 0.18}
+        }
+    },
+    "azure": {
+        "provider_id": "azure",
+        "name": "Microsoft Azure",
+        "is_enabled": True,
+        "regions": ["eastus", "westus2", "northeurope", "southeastasia"],
+        "resource_types": ["Virtual Machines", "Functions", "Blob Storage", "SQL Database", "AKS"],
+        "instance_types": {
+            "small": {"vcpu": 2, "memory_gb": 4, "cost_per_hour": 0.045},
+            "medium": {"vcpu": 4, "memory_gb": 8, "cost_per_hour": 0.095},
+            "large": {"vcpu": 8, "memory_gb": 16, "cost_per_hour": 0.19}
+        }
+    }
+}
+
+DEFAULT_QUOTA = {
+    "max_concurrent_labs": 2,
+    "max_daily_lab_hours": 4.0,
+    "max_monthly_lab_hours": 40.0,
+    "allowed_providers": ["aws", "gcp", "azure"],
+    "allowed_instance_types": ["small", "medium"],
+    "storage_limit_gb": 10
+}
+
+
+# === User-facing Lab Instance Routes ===
+
+@api_router.get("/lab-instances")
+async def get_user_lab_instances(user: Dict = Depends(require_auth)):
+    """Get current user's active lab instances"""
+    instances = await db.lab_instances.find(
+        {"user_id": user["user_id"], "status": {"$in": ["provisioning", "running", "suspended"]}},
+        {"_id": 0}
+    ).to_list(100)
+    return instances
+
+@api_router.post("/lab-instances")
+async def create_lab_instance(data: LabInstanceCreate, user: Dict = Depends(require_auth)):
+    """Create a new lab instance for the current user"""
+    # Check if lab exists
+    lab = await db.labs.find_one({"lab_id": data.lab_id}, {"_id": 0})
+    if not lab:
+        raise HTTPException(status_code=404, detail="Lab not found")
+    
+    # Get user quota
+    quota = await db.resource_quotas.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    if not quota:
+        quota = {**DEFAULT_QUOTA, "user_id": user["user_id"], "current_usage": {}}
+    
+    # Check concurrent lab limit
+    active_instances = await db.lab_instances.count_documents({
+        "user_id": user["user_id"],
+        "status": {"$in": ["provisioning", "running"]}
+    })
+    if active_instances >= quota.get("max_concurrent_labs", 2):
+        raise HTTPException(status_code=400, detail=f"Maximum concurrent labs ({quota.get('max_concurrent_labs', 2)}) reached")
+    
+    # Check provider allowed
+    if data.provider not in quota.get("allowed_providers", ["aws", "gcp", "azure"]):
+        raise HTTPException(status_code=400, detail=f"Provider {data.provider} not allowed for your account")
+    
+    # Check instance type allowed
+    if data.instance_type not in quota.get("allowed_instance_types", ["small", "medium"]):
+        raise HTTPException(status_code=400, detail=f"Instance type {data.instance_type} not allowed for your account")
+    
+    # Get provider config
+    provider_config = CLOUD_PROVIDERS.get(data.provider, CLOUD_PROVIDERS["aws"])
+    instance_config = provider_config["instance_types"].get(data.instance_type, provider_config["instance_types"]["small"])
+    
+    # Create instance (simulated)
+    instance = {
+        "instance_id": f"inst_{uuid.uuid4().hex[:12]}",
+        "user_id": user["user_id"],
+        "lab_id": data.lab_id,
+        "cert_id": lab["cert_id"],
+        "provider": data.provider,
+        "region": data.region,
+        "instance_type": data.instance_type,
+        "status": "running",  # Simulated - instant provisioning
+        "resources": {
+            "vcpu": instance_config["vcpu"],
+            "memory_gb": instance_config["memory_gb"],
+            "storage_gb": 20,
+            "ip_address": f"10.0.{uuid.uuid4().int % 256}.{uuid.uuid4().int % 256}",
+            "console_url": f"https://console.skilltrack365.com/lab/{data.lab_id}"
+        },
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+        "cost_estimate": instance_config["cost_per_hour"] * 2,  # 2 hour estimate
+        "error_message": None
+    }
+    
+    await db.lab_instances.insert_one(instance)
+    instance.pop("_id", None)
+    
+    logger.info(f"User {user['email']} started lab instance: {instance['instance_id']} for lab {data.lab_id}")
+    
+    return instance
+
+@api_router.post("/lab-instances/{instance_id}/action")
+async def lab_instance_action(instance_id: str, data: LabInstanceAction, user: Dict = Depends(require_auth)):
+    """Perform action on a lab instance (suspend, resume, terminate, extend)"""
+    instance = await db.lab_instances.find_one(
+        {"instance_id": instance_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    if not instance:
+        raise HTTPException(status_code=404, detail="Lab instance not found")
+    
+    if data.action == "suspend":
+        if instance["status"] != "running":
+            raise HTTPException(status_code=400, detail="Can only suspend running instances")
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"status": "suspended"}}
+        )
+        return {"message": "Instance suspended", "status": "suspended"}
+    
+    elif data.action == "resume":
+        if instance["status"] != "suspended":
+            raise HTTPException(status_code=400, detail="Can only resume suspended instances")
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"status": "running"}}
+        )
+        return {"message": "Instance resumed", "status": "running"}
+    
+    elif data.action == "terminate":
+        if instance["status"] == "terminated":
+            raise HTTPException(status_code=400, detail="Instance already terminated")
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {
+                "status": "terminated",
+                "terminated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        return {"message": "Instance terminated", "status": "terminated"}
+    
+    elif data.action == "extend":
+        if instance["status"] not in ["running", "suspended"]:
+            raise HTTPException(status_code=400, detail="Cannot extend terminated instances")
+        new_expires = datetime.now(timezone.utc) + timedelta(hours=2)
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"expires_at": new_expires.isoformat()}}
+        )
+        return {"message": "Instance extended by 2 hours", "expires_at": new_expires.isoformat()}
+    
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+
+@api_router.get("/lab-instances/{instance_id}")
+async def get_lab_instance(instance_id: str, user: Dict = Depends(require_auth)):
+    """Get details of a specific lab instance"""
+    instance = await db.lab_instances.find_one(
+        {"instance_id": instance_id, "user_id": user["user_id"]},
+        {"_id": 0}
+    )
+    if not instance:
+        raise HTTPException(status_code=404, detail="Lab instance not found")
+    return instance
+
+@api_router.get("/my-quota")
+async def get_my_quota(user: Dict = Depends(require_auth)):
+    """Get current user's resource quota"""
+    quota = await db.resource_quotas.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    if not quota:
+        return {**DEFAULT_QUOTA, "user_id": user["user_id"], "current_usage": {}}
+    return quota
+
+
+# === Admin Lab Orchestration Routes ===
+
+@api_router.get("/admin/lab-orchestration/dashboard")
+async def admin_lab_dashboard(admin: Dict = Depends(get_admin)):
+    """Get lab orchestration dashboard stats"""
+    # Count instances by status
+    running_count = await db.lab_instances.count_documents({"status": "running"})
+    suspended_count = await db.lab_instances.count_documents({"status": "suspended"})
+    provisioning_count = await db.lab_instances.count_documents({"status": "provisioning"})
+    terminated_today = await db.lab_instances.count_documents({
+        "status": "terminated",
+        "terminated_at": {"$gte": datetime.now(timezone.utc).replace(hour=0, minute=0, second=0).isoformat()}
+    })
+    
+    # Count by provider
+    provider_stats = {}
+    for provider in ["aws", "gcp", "azure"]:
+        count = await db.lab_instances.count_documents({
+            "provider": provider,
+            "status": {"$in": ["running", "suspended", "provisioning"]}
+        })
+        provider_stats[provider] = count
+    
+    # Calculate total resource usage (simulated)
+    total_vcpu = 0
+    total_memory = 0
+    total_cost = 0.0
+    
+    active_instances = await db.lab_instances.find(
+        {"status": {"$in": ["running", "suspended", "provisioning"]}},
+        {"_id": 0}
+    ).to_list(1000)
+    
+    for inst in active_instances:
+        resources = inst.get("resources", {})
+        total_vcpu += resources.get("vcpu", 0)
+        total_memory += resources.get("memory_gb", 0)
+        total_cost += inst.get("cost_estimate", 0)
+    
+    # Users with active labs
+    unique_users = len(set(inst["user_id"] for inst in active_instances))
+    
+    # Recent errors
+    error_instances = await db.lab_instances.find(
+        {"status": "error"},
+        {"_id": 0}
+    ).sort("started_at", -1).to_list(5)
+    
+    return {
+        "instances": {
+            "running": running_count,
+            "suspended": suspended_count,
+            "provisioning": provisioning_count,
+            "terminated_today": terminated_today
+        },
+        "providers": provider_stats,
+        "resources": {
+            "total_vcpu": total_vcpu,
+            "total_memory_gb": total_memory,
+            "estimated_daily_cost": round(total_cost * 12, 2)  # Rough daily estimate
+        },
+        "active_users": unique_users,
+        "recent_errors": error_instances
+    }
+
+@api_router.get("/admin/lab-orchestration/instances")
+async def admin_list_instances(
+    status: Optional[str] = None,
+    provider: Optional[str] = None,
+    user_id: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """List all lab instances with optional filters"""
+    query = {}
+    if status:
+        query["status"] = status
+    if provider:
+        query["provider"] = provider
+    if user_id:
+        query["user_id"] = user_id
+    
+    instances = await db.lab_instances.find(query, {"_id": 0}).sort("started_at", -1).to_list(500)
+    
+    # Enrich with user and lab info
+    for inst in instances:
+        user = await db.users.find_one({"user_id": inst["user_id"]}, {"_id": 0, "email": 1, "name": 1})
+        inst["user"] = user or {"email": "Unknown", "name": "Unknown"}
+        lab = await db.labs.find_one({"lab_id": inst["lab_id"]}, {"_id": 0, "title": 1})
+        inst["lab_title"] = lab.get("title", "Unknown") if lab else "Unknown"
+    
+    return instances
+
+@api_router.post("/admin/lab-orchestration/instances/{instance_id}/action")
+async def admin_instance_action(instance_id: str, data: LabInstanceAction, admin: Dict = Depends(get_admin)):
+    """Admin action on any lab instance"""
+    instance = await db.lab_instances.find_one({"instance_id": instance_id}, {"_id": 0})
+    if not instance:
+        raise HTTPException(status_code=404, detail="Lab instance not found")
+    
+    if data.action == "suspend":
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"status": "suspended"}}
+        )
+        logger.info(f"Admin {admin['email']} suspended instance {instance_id}")
+        return {"message": "Instance suspended by admin", "status": "suspended"}
+    
+    elif data.action == "resume":
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"status": "running"}}
+        )
+        logger.info(f"Admin {admin['email']} resumed instance {instance_id}")
+        return {"message": "Instance resumed by admin", "status": "running"}
+    
+    elif data.action == "terminate":
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {
+                "status": "terminated",
+                "terminated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        logger.info(f"Admin {admin['email']} terminated instance {instance_id}")
+        return {"message": "Instance terminated by admin", "status": "terminated"}
+    
+    elif data.action == "extend":
+        new_expires = datetime.now(timezone.utc) + timedelta(hours=4)  # Admin gets 4 hour extension
+        await db.lab_instances.update_one(
+            {"instance_id": instance_id},
+            {"$set": {"expires_at": new_expires.isoformat()}}
+        )
+        logger.info(f"Admin {admin['email']} extended instance {instance_id}")
+        return {"message": "Instance extended by admin (4 hours)", "expires_at": new_expires.isoformat()}
+    
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {data.action}")
+
+
+# === Quota Management Routes ===
+
+@api_router.get("/admin/lab-orchestration/quotas")
+async def admin_list_quotas(admin: Dict = Depends(get_admin)):
+    """List all user quotas"""
+    quotas = await db.resource_quotas.find({}, {"_id": 0}).to_list(500)
+    
+    # Enrich with user info
+    for q in quotas:
+        user = await db.users.find_one({"user_id": q["user_id"]}, {"_id": 0, "email": 1, "name": 1})
+        q["user"] = user or {"email": "Unknown", "name": "Unknown"}
+        
+        # Calculate current usage
+        active_count = await db.lab_instances.count_documents({
+            "user_id": q["user_id"],
+            "status": {"$in": ["running", "suspended", "provisioning"]}
+        })
+        q["current_active_labs"] = active_count
+    
+    return quotas
+
+@api_router.get("/admin/lab-orchestration/quotas/{user_id}")
+async def admin_get_user_quota(user_id: str, admin: Dict = Depends(get_admin)):
+    """Get quota for a specific user"""
+    quota = await db.resource_quotas.find_one({"user_id": user_id}, {"_id": 0})
+    
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not quota:
+        quota = {**DEFAULT_QUOTA, "user_id": user_id, "current_usage": {}}
+    
+    quota["user"] = {"email": user.get("email"), "name": user.get("name")}
+    
+    # Calculate current usage
+    active_count = await db.lab_instances.count_documents({
+        "user_id": user_id,
+        "status": {"$in": ["running", "suspended", "provisioning"]}
+    })
+    quota["current_active_labs"] = active_count
+    
+    return quota
+
+@api_router.put("/admin/lab-orchestration/quotas/{user_id}")
+async def admin_update_quota(user_id: str, data: QuotaUpdate, admin: Dict = Depends(get_admin)):
+    """Update quota for a specific user"""
+    user = await db.users.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    existing = await db.resource_quotas.find_one({"user_id": user_id})
+    
+    update_data = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if data.max_concurrent_labs is not None:
+        update_data["max_concurrent_labs"] = data.max_concurrent_labs
+    if data.max_daily_lab_hours is not None:
+        update_data["max_daily_lab_hours"] = data.max_daily_lab_hours
+    if data.max_monthly_lab_hours is not None:
+        update_data["max_monthly_lab_hours"] = data.max_monthly_lab_hours
+    if data.allowed_providers is not None:
+        update_data["allowed_providers"] = data.allowed_providers
+    if data.allowed_instance_types is not None:
+        update_data["allowed_instance_types"] = data.allowed_instance_types
+    if data.storage_limit_gb is not None:
+        update_data["storage_limit_gb"] = data.storage_limit_gb
+    
+    if existing:
+        await db.resource_quotas.update_one(
+            {"user_id": user_id},
+            {"$set": update_data}
+        )
+    else:
+        new_quota = {
+            **DEFAULT_QUOTA,
+            "quota_id": f"quota_{uuid.uuid4().hex[:12]}",
+            "user_id": user_id,
+            **update_data,
+            "current_usage": {}
+        }
+        await db.resource_quotas.insert_one(new_quota)
+    
+    logger.info(f"Admin {admin['email']} updated quota for user {user_id}")
+    return {"message": "Quota updated successfully"}
+
+@api_router.delete("/admin/lab-orchestration/quotas/{user_id}")
+async def admin_reset_quota(user_id: str, admin: Dict = Depends(get_admin)):
+    """Reset user quota to defaults"""
+    await db.resource_quotas.delete_one({"user_id": user_id})
+    logger.info(f"Admin {admin['email']} reset quota for user {user_id} to defaults")
+    return {"message": "Quota reset to defaults"}
+
+
+# === Cloud Provider Management Routes ===
+
+@api_router.get("/admin/lab-orchestration/providers")
+async def admin_list_providers(admin: Dict = Depends(get_admin)):
+    """List all cloud providers with their configurations"""
+    # Check for custom provider settings in DB
+    custom_providers = await db.cloud_providers.find({}, {"_id": 0}).to_list(10)
+    custom_map = {p["provider_id"]: p for p in custom_providers}
+    
+    result = []
+    for pid, provider in CLOUD_PROVIDERS.items():
+        if pid in custom_map:
+            # Merge custom settings
+            merged = {**provider, **custom_map[pid]}
+            result.append(merged)
+        else:
+            result.append(provider)
+    
+    return result
+
+@api_router.put("/admin/lab-orchestration/providers/{provider_id}")
+async def admin_update_provider(provider_id: str, is_enabled: bool, admin: Dict = Depends(get_admin)):
+    """Enable or disable a cloud provider"""
+    if provider_id not in CLOUD_PROVIDERS:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    
+    await db.cloud_providers.update_one(
+        {"provider_id": provider_id},
+        {"$set": {"is_enabled": is_enabled, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    status = "enabled" if is_enabled else "disabled"
+    logger.info(f"Admin {admin['email']} {status} provider {provider_id}")
+    return {"message": f"Provider {provider_id} {status}"}
+
+
+# === Resource Monitoring Routes ===
+
+@api_router.get("/admin/lab-orchestration/metrics")
+async def admin_get_metrics(period: str = "24h", admin: Dict = Depends(get_admin)):
+    """Get resource usage metrics (simulated)"""
+    # Calculate time range
+    hours = 24
+    if period == "7d":
+        hours = 168
+    elif period == "30d":
+        hours = 720
+    
+    start_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+    
+    # Get all instances in the period
+    all_instances = await db.lab_instances.find(
+        {"started_at": {"$gte": start_time.isoformat()}},
+        {"_id": 0}
+    ).to_list(10000)
+    
+    # Calculate metrics
+    total_instances = len(all_instances)
+    total_hours = sum(
+        2 for inst in all_instances  # Each lab session is ~2 hours
+    )
+    
+    # Provider breakdown
+    provider_usage = {}
+    for provider in ["aws", "gcp", "azure"]:
+        count = len([i for i in all_instances if i.get("provider") == provider])
+        provider_usage[provider] = count
+    
+    # Cost estimation
+    total_cost = sum(inst.get("cost_estimate", 0.1) for inst in all_instances)
+    
+    # Hourly breakdown (simulated)
+    hourly_data = []
+    for h in range(min(24, hours)):
+        hour_time = datetime.now(timezone.utc) - timedelta(hours=h)
+        hourly_data.append({
+            "hour": hour_time.isoformat(),
+            "instances": max(0, total_instances // 24 + (1 if h < total_instances % 24 else 0)),
+            "cost": round(total_cost / 24, 2)
+        })
+    
+    return {
+        "period": period,
+        "total_instances": total_instances,
+        "total_lab_hours": total_hours,
+        "estimated_cost": round(total_cost, 2),
+        "provider_usage": provider_usage,
+        "hourly_breakdown": hourly_data[::-1]  # Oldest first
+    }
+
+
+# ============== EXAM & CERTIFICATION ADMIN ROUTES ==============
+
+# Pydantic Models for Exam Admin
+class QuestionCreate(BaseModel):
+    """Model for creating/updating a question in the question bank"""
+    model_config = ConfigDict(extra="ignore")
+    question_id: str = Field(default_factory=lambda: f"q_{uuid.uuid4().hex[:12]}")
+    cert_id: str
+    domain: str
+    topic: str
+    question_text: str
+    question_type: str = "multiple_choice"  # multiple_choice, true_false, multi_select
+    options: List[str] = []
+    correct_answer: str = ""  # For multiple_choice/true_false
+    correct_answers: List[str] = []  # For multi_select
+    explanation: str = ""
+    difficulty: str = "intermediate"  # easy, intermediate, hard
+    tags: List[str] = []
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ExamCreate(BaseModel):
+    """Model for creating/updating an exam"""
+    model_config = ConfigDict(extra="ignore")
+    exam_id: str = Field(default_factory=lambda: f"exam_{uuid.uuid4().hex[:12]}")
+    cert_id: str
+    title: str
+    description: str
+    exam_type: str = "practice"  # practice, mock, final
+    duration_minutes: int = 90
+    pass_percentage: int = 70
+    total_questions: int = 50
+    question_selection: str = "random"  # random, fixed, weighted
+    question_ids: List[str] = []  # For fixed selection
+    domain_weights: Dict[str, int] = {}  # For weighted selection {domain: percentage}
+    is_timed: bool = True
+    show_answers_after: bool = True
+    max_attempts: int = 0  # 0 = unlimited
+    is_published: bool = False
+    order: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class CertificateTemplateCreate(BaseModel):
+    """Model for certificate templates"""
+    model_config = ConfigDict(extra="ignore")
+    template_id: str = Field(default_factory=lambda: f"tmpl_{uuid.uuid4().hex[:12]}")
+    cert_id: str
+    name: str
+    description: str = ""
+    background_color: str = "#ffffff"
+    accent_color: str = "#1e40af"
+    logo_url: str = ""
+    signature_url: str = ""
+    signatory_name: str = "Platform Director"
+    signatory_title: str = "SkillTrack365"
+    include_badge: bool = True
+    include_qr: bool = True
+    custom_text: str = ""
+    is_default: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ExamAttemptCreate(BaseModel):
+    """Model for exam attempts"""
+    model_config = ConfigDict(extra="ignore")
+    attempt_id: str = Field(default_factory=lambda: f"att_{uuid.uuid4().hex[:12]}")
+    exam_id: str
+    user_id: str
+    cert_id: str
+    questions: List[Dict] = []  # Selected questions for this attempt
+    answers: Dict[str, str] = {}
+    score: int = 0
+    passed: bool = False
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+    time_spent_seconds: int = 0
+    status: str = "in_progress"  # in_progress, completed, abandoned
+
+
+# === Admin Question Bank Routes ===
+
+@api_router.get("/admin/question-bank/stats")
+async def admin_get_question_bank_stats(admin: Dict = Depends(get_admin)):
+    """Get question bank statistics"""
+    total_questions = await db.question_bank.count_documents({})
+    active_questions = await db.question_bank.count_documents({"is_active": True})
+    
+    # Questions by certification
+    certs = await db.certifications.find({}, {"_id": 0, "cert_id": 1, "name": 1, "vendor": 1}).to_list(100)
+    questions_by_cert = {}
+    for cert in certs:
+        count = await db.question_bank.count_documents({"cert_id": cert["cert_id"]})
+        questions_by_cert[cert["cert_id"]] = {
+            "name": f"{cert.get('vendor', '')} {cert.get('name', '')}",
+            "count": count
+        }
+    
+    # Questions by difficulty
+    easy = await db.question_bank.count_documents({"difficulty": "easy"})
+    intermediate = await db.question_bank.count_documents({"difficulty": "intermediate"})
+    hard = await db.question_bank.count_documents({"difficulty": "hard"})
+    
+    return {
+        "total_questions": total_questions,
+        "active_questions": active_questions,
+        "inactive_questions": total_questions - active_questions,
+        "questions_by_cert": questions_by_cert,
+        "questions_by_difficulty": {
+            "easy": easy,
+            "intermediate": intermediate,
+            "hard": hard
+        }
+    }
+
+@api_router.get("/admin/question-bank")
+async def admin_get_questions(
+    cert_id: Optional[str] = None,
+    domain: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get questions from the question bank with filters"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    if domain:
+        query["domain"] = domain
+    if difficulty:
+        query["difficulty"] = difficulty
+    if is_active is not None:
+        query["is_active"] = is_active
+    if search:
+        query["$or"] = [
+            {"question_text": {"$regex": search, "$options": "i"}},
+            {"topic": {"$regex": search, "$options": "i"}},
+            {"tags": {"$in": [search]}}
+        ]
+    
+    total = await db.question_bank.count_documents(query)
+    questions = await db.question_bank.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "questions": questions,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/question-bank/{question_id}")
+async def admin_get_question(question_id: str, admin: Dict = Depends(get_admin)):
+    """Get a single question"""
+    question = await db.question_bank.find_one({"question_id": question_id}, {"_id": 0})
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return question
+
+@api_router.post("/admin/question-bank")
+async def admin_create_question(question: QuestionCreate, admin: Dict = Depends(get_admin)):
+    """Create a new question"""
+    # Verify certification exists
+    cert = await db.certifications.find_one({"cert_id": question.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    question_dict = question.model_dump()
+    question_dict["created_at"] = datetime.now(timezone.utc).isoformat()
+    question_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+    question_dict["created_by"] = admin["user_id"]
+    
+    await db.question_bank.insert_one(question_dict)
+    
+    logger.info(f"Admin {admin['email']} created question {question.question_id}")
+    return {"message": "Question created", "question_id": question.question_id}
+
+@api_router.put("/admin/question-bank/{question_id}")
+async def admin_update_question(question_id: str, updates: Dict, admin: Dict = Depends(get_admin)):
+    """Update a question"""
+    existing = await db.question_bank.find_one({"question_id": question_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    # Don't allow updating question_id
+    updates.pop("question_id", None)
+    updates.pop("_id", None)
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updates["updated_by"] = admin["user_id"]
+    
+    await db.question_bank.update_one(
+        {"question_id": question_id},
+        {"$set": updates}
+    )
+    
+    logger.info(f"Admin {admin['email']} updated question {question_id}")
+    return {"message": "Question updated"}
+
+@api_router.delete("/admin/question-bank/{question_id}")
+async def admin_delete_question(question_id: str, admin: Dict = Depends(get_super_admin)):
+    """Delete a question (super_admin only)"""
+    result = await db.question_bank.delete_one({"question_id": question_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    logger.info(f"Super admin {admin['email']} deleted question {question_id}")
+    return {"message": "Question deleted"}
+
+@api_router.post("/admin/question-bank/bulk-import")
+async def admin_bulk_import_questions(questions: List[QuestionCreate], admin: Dict = Depends(get_admin)):
+    """Bulk import questions"""
+    imported = 0
+    errors = []
+    
+    for i, question in enumerate(questions):
+        try:
+            question_dict = question.model_dump()
+            question_dict["created_at"] = datetime.now(timezone.utc).isoformat()
+            question_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+            question_dict["created_by"] = admin["user_id"]
+            await db.question_bank.insert_one(question_dict)
+            imported += 1
+        except Exception as e:
+            errors.append({"index": i, "error": str(e)})
+    
+    logger.info(f"Admin {admin['email']} bulk imported {imported} questions")
+    return {
+        "message": f"Imported {imported} questions",
+        "imported": imported,
+        "errors": errors
+    }
+
+
+# === Admin Exam Management Routes ===
+
+@api_router.get("/admin/exams/stats")
+async def admin_get_exam_stats(admin: Dict = Depends(get_admin)):
+    """Get exam statistics"""
+    total_exams = await db.admin_exams.count_documents({})
+    published_exams = await db.admin_exams.count_documents({"is_published": True})
+    
+    # Exams by type
+    practice_count = await db.admin_exams.count_documents({"exam_type": "practice"})
+    mock_count = await db.admin_exams.count_documents({"exam_type": "mock"})
+    final_count = await db.admin_exams.count_documents({"exam_type": "final"})
+    
+    # Total attempts
+    total_attempts = await db.exam_attempts.count_documents({})
+    completed_attempts = await db.exam_attempts.count_documents({"status": "completed"})
+    passed_attempts = await db.exam_attempts.count_documents({"passed": True})
+    
+    # Average pass rate
+    pass_rate = round((passed_attempts / completed_attempts * 100), 1) if completed_attempts > 0 else 0
+    
+    return {
+        "total_exams": total_exams,
+        "published_exams": published_exams,
+        "draft_exams": total_exams - published_exams,
+        "exams_by_type": {
+            "practice": practice_count,
+            "mock": mock_count,
+            "final": final_count
+        },
+        "attempts": {
+            "total": total_attempts,
+            "completed": completed_attempts,
+            "passed": passed_attempts,
+            "pass_rate": pass_rate
+        }
+    }
+
+@api_router.get("/admin/exams")
+async def admin_get_exams(
+    cert_id: Optional[str] = None,
+    exam_type: Optional[str] = None,
+    is_published: Optional[bool] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all exams with filters"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    if exam_type:
+        query["exam_type"] = exam_type
+    if is_published is not None:
+        query["is_published"] = is_published
+    
+    exams = await db.admin_exams.find(query, {"_id": 0}).sort("order", 1).to_list(100)
+    
+    # Enrich with attempt counts
+    for exam in exams:
+        attempt_count = await db.exam_attempts.count_documents({"exam_id": exam["exam_id"]})
+        passed_count = await db.exam_attempts.count_documents({"exam_id": exam["exam_id"], "passed": True})
+        exam["attempt_count"] = attempt_count
+        exam["pass_count"] = passed_count
+    
+    return exams
+
+@api_router.get("/admin/exams/{exam_id}")
+async def admin_get_exam(exam_id: str, admin: Dict = Depends(get_admin)):
+    """Get a single exam with full details"""
+    exam = await db.admin_exams.find_one({"exam_id": exam_id}, {"_id": 0})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    # Get question details if fixed selection
+    if exam.get("question_selection") == "fixed" and exam.get("question_ids"):
+        questions = await db.question_bank.find(
+            {"question_id": {"$in": exam["question_ids"]}},
+            {"_id": 0}
+        ).to_list(500)
+        exam["questions"] = questions
+    
+    return exam
+
+@api_router.post("/admin/exams")
+async def admin_create_exam(exam: ExamCreate, admin: Dict = Depends(get_admin)):
+    """Create a new exam"""
+    # Verify certification exists
+    cert = await db.certifications.find_one({"cert_id": exam.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    exam_dict = exam.model_dump()
+    exam_dict["created_at"] = datetime.now(timezone.utc).isoformat()
+    exam_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+    exam_dict["created_by"] = admin["user_id"]
+    
+    await db.admin_exams.insert_one(exam_dict)
+    
+    logger.info(f"Admin {admin['email']} created exam {exam.exam_id}")
+    return {"message": "Exam created", "exam_id": exam.exam_id}
+
+@api_router.put("/admin/exams/{exam_id}")
+async def admin_update_exam(exam_id: str, updates: Dict, admin: Dict = Depends(get_admin)):
+    """Update an exam"""
+    existing = await db.admin_exams.find_one({"exam_id": exam_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    updates.pop("exam_id", None)
+    updates.pop("_id", None)
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updates["updated_by"] = admin["user_id"]
+    
+    await db.admin_exams.update_one(
+        {"exam_id": exam_id},
+        {"$set": updates}
+    )
+    
+    logger.info(f"Admin {admin['email']} updated exam {exam_id}")
+    return {"message": "Exam updated"}
+
+@api_router.delete("/admin/exams/{exam_id}")
+async def admin_delete_exam(exam_id: str, admin: Dict = Depends(get_super_admin)):
+    """Delete an exam (super_admin only)"""
+    result = await db.admin_exams.delete_one({"exam_id": exam_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    logger.info(f"Super admin {admin['email']} deleted exam {exam_id}")
+    return {"message": "Exam deleted"}
+
+@api_router.post("/admin/exams/{exam_id}/add-questions")
+async def admin_add_questions_to_exam(exam_id: str, question_ids: List[str], admin: Dict = Depends(get_admin)):
+    """Add questions to an exam (for fixed selection)"""
+    exam = await db.admin_exams.find_one({"exam_id": exam_id})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    # Verify questions exist
+    for qid in question_ids:
+        q = await db.question_bank.find_one({"question_id": qid})
+        if not q:
+            raise HTTPException(status_code=404, detail=f"Question {qid} not found")
+    
+    current_ids = exam.get("question_ids", [])
+    new_ids = list(set(current_ids + question_ids))
+    
+    await db.admin_exams.update_one(
+        {"exam_id": exam_id},
+        {"$set": {
+            "question_ids": new_ids,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    return {"message": f"Added {len(question_ids)} questions", "total_questions": len(new_ids)}
+
+@api_router.post("/admin/exams/{exam_id}/remove-questions")
+async def admin_remove_questions_from_exam(exam_id: str, question_ids: List[str], admin: Dict = Depends(get_admin)):
+    """Remove questions from an exam"""
+    exam = await db.admin_exams.find_one({"exam_id": exam_id})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    current_ids = exam.get("question_ids", [])
+    new_ids = [qid for qid in current_ids if qid not in question_ids]
+    
+    await db.admin_exams.update_one(
+        {"exam_id": exam_id},
+        {"$set": {
+            "question_ids": new_ids,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    return {"message": f"Removed {len(question_ids)} questions", "total_questions": len(new_ids)}
+
+
+# === Admin Certificate Template Routes ===
+
+@api_router.get("/admin/certificate-templates")
+async def admin_get_certificate_templates(cert_id: Optional[str] = None, admin: Dict = Depends(get_admin)):
+    """Get all certificate templates"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    
+    templates = await db.certificate_templates.find(query, {"_id": 0}).to_list(100)
+    return templates
+
+@api_router.get("/admin/certificate-templates/{template_id}")
+async def admin_get_certificate_template(template_id: str, admin: Dict = Depends(get_admin)):
+    """Get a single certificate template"""
+    template = await db.certificate_templates.find_one({"template_id": template_id}, {"_id": 0})
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+@api_router.post("/admin/certificate-templates")
+async def admin_create_certificate_template(template: CertificateTemplateCreate, admin: Dict = Depends(get_admin)):
+    """Create a new certificate template"""
+    # Verify certification exists
+    cert = await db.certifications.find_one({"cert_id": template.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    # If this is set as default, unset other defaults for this cert
+    if template.is_default:
+        await db.certificate_templates.update_many(
+            {"cert_id": template.cert_id},
+            {"$set": {"is_default": False}}
+        )
+    
+    template_dict = template.model_dump()
+    template_dict["created_at"] = datetime.now(timezone.utc).isoformat()
+    template_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+    template_dict["created_by"] = admin["user_id"]
+    
+    await db.certificate_templates.insert_one(template_dict)
+    
+    logger.info(f"Admin {admin['email']} created certificate template {template.template_id}")
+    return {"message": "Template created", "template_id": template.template_id}
+
+@api_router.put("/admin/certificate-templates/{template_id}")
+async def admin_update_certificate_template(template_id: str, updates: Dict, admin: Dict = Depends(get_admin)):
+    """Update a certificate template"""
+    existing = await db.certificate_templates.find_one({"template_id": template_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    # If setting as default, unset other defaults
+    if updates.get("is_default"):
+        await db.certificate_templates.update_many(
+            {"cert_id": existing["cert_id"], "template_id": {"$ne": template_id}},
+            {"$set": {"is_default": False}}
+        )
+    
+    updates.pop("template_id", None)
+    updates.pop("_id", None)
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updates["updated_by"] = admin["user_id"]
+    
+    await db.certificate_templates.update_one(
+        {"template_id": template_id},
+        {"$set": updates}
+    )
+    
+    logger.info(f"Admin {admin['email']} updated template {template_id}")
+    return {"message": "Template updated"}
+
+@api_router.delete("/admin/certificate-templates/{template_id}")
+async def admin_delete_certificate_template(template_id: str, admin: Dict = Depends(get_super_admin)):
+    """Delete a certificate template (super_admin only)"""
+    result = await db.certificate_templates.delete_one({"template_id": template_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    logger.info(f"Super admin {admin['email']} deleted template {template_id}")
+    return {"message": "Template deleted"}
+
+
+# === Admin Issued Certificates Routes ===
+
+@api_router.get("/admin/issued-certificates")
+async def admin_get_issued_certificates(
+    cert_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all issued certificates with filters"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    if user_id:
+        query["user_id"] = user_id
+    
+    total = await db.certificates.count_documents(query)
+    certificates = await db.certificates.find(query, {"_id": 0}).sort("issued_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Enrich with user info
+    for cert in certificates:
+        user = await db.users.find_one({"user_id": cert.get("user_id")}, {"_id": 0, "name": 1, "email": 1})
+        cert["user"] = user
+    
+    return {
+        "certificates": certificates,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.post("/admin/issued-certificates/{certificate_id}/revoke")
+async def admin_revoke_certificate(certificate_id: str, reason: str = "Administrative action", admin: Dict = Depends(get_super_admin)):
+    """Revoke an issued certificate (super_admin only)"""
+    existing = await db.certificates.find_one({"certificate_id": certificate_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    
+    await db.certificates.update_one(
+        {"certificate_id": certificate_id},
+        {"$set": {
+            "is_revoked": True,
+            "revoked_at": datetime.now(timezone.utc).isoformat(),
+            "revoked_by": admin["user_id"],
+            "revoke_reason": reason
+        }}
+    )
+    
+    logger.info(f"Super admin {admin['email']} revoked certificate {certificate_id}")
+    return {"message": "Certificate revoked"}
+
+
+# === Admin Exam Attempts/Analytics Routes ===
+
+@api_router.get("/admin/exam-attempts")
+async def admin_get_exam_attempts(
+    exam_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get exam attempts with filters"""
+    query = {}
+    if exam_id:
+        query["exam_id"] = exam_id
+    if user_id:
+        query["user_id"] = user_id
+    if status:
+        query["status"] = status
+    
+    total = await db.exam_attempts.count_documents(query)
+    attempts = await db.exam_attempts.find(query, {"_id": 0}).sort("started_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Enrich with user and exam info
+    for attempt in attempts:
+        user = await db.users.find_one({"user_id": attempt.get("user_id")}, {"_id": 0, "name": 1, "email": 1})
+        exam = await db.admin_exams.find_one({"exam_id": attempt.get("exam_id")}, {"_id": 0, "title": 1})
+        attempt["user"] = user
+        attempt["exam"] = exam
+    
+    return {
+        "attempts": attempts,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/exams/{exam_id}/analytics")
+async def admin_get_exam_analytics(exam_id: str, admin: Dict = Depends(get_admin)):
+    """Get detailed analytics for an exam"""
+    exam = await db.admin_exams.find_one({"exam_id": exam_id})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    attempts = await db.exam_attempts.find({"exam_id": exam_id, "status": "completed"}, {"_id": 0}).to_list(10000)
+    
+    if not attempts:
+        return {
+            "exam_id": exam_id,
+            "total_attempts": 0,
+            "pass_rate": 0,
+            "avg_score": 0,
+            "avg_time_minutes": 0,
+            "score_distribution": {},
+            "question_analytics": []
+        }
+    
+    # Calculate stats
+    scores = [a.get("score", 0) for a in attempts]
+    times = [a.get("time_spent_seconds", 0) / 60 for a in attempts]
+    passed = len([a for a in attempts if a.get("passed")])
+    
+    # Score distribution
+    score_ranges = {"0-50": 0, "51-60": 0, "61-70": 0, "71-80": 0, "81-90": 0, "91-100": 0}
+    for score in scores:
+        if score <= 50:
+            score_ranges["0-50"] += 1
+        elif score <= 60:
+            score_ranges["51-60"] += 1
+        elif score <= 70:
+            score_ranges["61-70"] += 1
+        elif score <= 80:
+            score_ranges["71-80"] += 1
+        elif score <= 90:
+            score_ranges["81-90"] += 1
+        else:
+            score_ranges["91-100"] += 1
+    
+    return {
+        "exam_id": exam_id,
+        "total_attempts": len(attempts),
+        "pass_rate": round(passed / len(attempts) * 100, 1),
+        "avg_score": round(sum(scores) / len(scores), 1),
+        "avg_time_minutes": round(sum(times) / len(times), 1),
+        "min_score": min(scores),
+        "max_score": max(scores),
+        "score_distribution": score_ranges
+    }
+
+
+# === Get domains for a certification (helper for question bank) ===
+
+@api_router.get("/admin/certifications/{cert_id}/domains")
+async def admin_get_cert_domains(cert_id: str, admin: Dict = Depends(get_admin)):
+    """Get exam domains for a certification"""
+    cert = await db.certifications.find_one({"cert_id": cert_id}, {"_id": 0})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    domains = cert.get("exam_domains", [])
+    return {"cert_id": cert_id, "domains": domains}
+
+
+# ============== ADMIN BILLING & SUBSCRIPTIONS ==============
+
+# Pydantic models for billing admin
+class PricingPlanCreate(BaseModel):
+    plan_id: str = Field(default_factory=lambda: f"plan_{uuid.uuid4().hex[:12]}")
+    name: str
+    description: str
+    price: float
+    currency: str = "usd"
+    billing_period: str  # monthly, yearly, one_time
+    features: List[str] = []
+    is_active: bool = True
+    is_featured: bool = False
+    stripe_price_id: Optional[str] = None
+    trial_days: int = 0
+    max_users: Optional[int] = None  # For team plans
+    order: int = 0
+
+class PricingPlanUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[float] = None
+    currency: Optional[str] = None
+    billing_period: Optional[str] = None
+    features: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    is_featured: Optional[bool] = None
+    stripe_price_id: Optional[str] = None
+    trial_days: Optional[int] = None
+    max_users: Optional[int] = None
+    order: Optional[int] = None
+
+class SubscriptionUpdate(BaseModel):
+    status: Optional[str] = None  # active, cancelled, paused, expired
+    plan_id: Optional[str] = None
+    expires_at: Optional[str] = None
+    notes: Optional[str] = None
+
+class RefundRequest(BaseModel):
+    reason: str
+    amount: Optional[float] = None  # Partial refund if specified
+
+# Admin Billing Dashboard
+@api_router.get("/admin/billing/dashboard")
+async def admin_billing_dashboard(admin: Dict = Depends(get_admin)):
+    """Get billing dashboard overview"""
+    
+    # Total revenue
+    revenue_pipeline = [
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    revenue_result = await db.payment_transactions.aggregate(revenue_pipeline).to_list(1)
+    total_revenue = revenue_result[0]["total"] if revenue_result else 0
+    
+    # Monthly revenue (current month)
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    monthly_pipeline = [
+        {"$match": {
+            "payment_status": "paid",
+            "created_at": {"$gte": month_start.isoformat()}
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    monthly_result = await db.payment_transactions.aggregate(monthly_pipeline).to_list(1)
+    monthly_revenue = monthly_result[0]["total"] if monthly_result else 0
+    
+    # Subscription counts by status
+    active_subs = await db.users.count_documents({"subscription_status": "premium"})
+    free_users = await db.users.count_documents({"subscription_status": "free"})
+    expired_subs = await db.users.count_documents({"subscription_status": "expired"})
+    
+    # Transaction counts
+    total_transactions = await db.payment_transactions.count_documents({})
+    successful_transactions = await db.payment_transactions.count_documents({"payment_status": "paid"})
+    pending_transactions = await db.payment_transactions.count_documents({"payment_status": "pending"})
+    failed_transactions = await db.payment_transactions.count_documents({"payment_status": {"$in": ["failed", "cancelled"]}})
+    
+    # Revenue by plan
+    plan_revenue_pipeline = [
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {"_id": "$plan", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}}
+    ]
+    plan_revenue = await db.payment_transactions.aggregate(plan_revenue_pipeline).to_list(100)
+    
+    # Revenue trend (last 6 months)
+    six_months_ago = now - timedelta(days=180)
+    trend_pipeline = [
+        {"$match": {"payment_status": "paid", "created_at": {"$gte": six_months_ago.isoformat()}}},
+        {"$addFields": {"month": {"$substr": ["$created_at", 0, 7]}}},
+        {"$group": {"_id": "$month", "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}}
+    ]
+    revenue_trend = await db.payment_transactions.aggregate(trend_pipeline).to_list(12)
+    
+    # Active plans count
+    plans_count = await db.pricing_plans.count_documents({"is_active": True})
+    
+    return {
+        "total_revenue": total_revenue,
+        "monthly_revenue": monthly_revenue,
+        "subscriptions": {
+            "active": active_subs,
+            "free": free_users,
+            "expired": expired_subs
+        },
+        "transactions": {
+            "total": total_transactions,
+            "successful": successful_transactions,
+            "pending": pending_transactions,
+            "failed": failed_transactions
+        },
+        "revenue_by_plan": plan_revenue,
+        "revenue_trend": revenue_trend,
+        "active_plans": plans_count
+    }
+
+# Pricing Plans CRUD
+@api_router.get("/admin/billing/plans")
+async def admin_get_pricing_plans(
+    is_active: Optional[bool] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all pricing plans"""
+    query = {}
+    if is_active is not None:
+        query["is_active"] = is_active
+    
+    plans = await db.pricing_plans.find(query, {"_id": 0}).sort("order", 1).to_list(100)
+    return plans
+
+@api_router.get("/admin/billing/plans/{plan_id}")
+async def admin_get_pricing_plan(plan_id: str, admin: Dict = Depends(get_admin)):
+    """Get single pricing plan"""
+    plan = await db.pricing_plans.find_one({"plan_id": plan_id}, {"_id": 0})
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return plan
+
+@api_router.post("/admin/billing/plans")
+async def admin_create_pricing_plan(plan: PricingPlanCreate, admin: Dict = Depends(get_admin)):
+    """Create a new pricing plan"""
+    # Check for duplicate plan_id
+    existing = await db.pricing_plans.find_one({"plan_id": plan.plan_id})
+    if existing:
+        raise HTTPException(status_code=400, detail="Plan ID already exists")
+    
+    plan_data = plan.model_dump()
+    plan_data["created_at"] = datetime.now(timezone.utc).isoformat()
+    plan_data["created_by"] = admin["user_id"]
+    plan_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    
+    await db.pricing_plans.insert_one(plan_data)
+    logger.info(f"Admin {admin['email']} created pricing plan: {plan.name}")
+    
+    return {**plan_data, "_id": None}
+
+@api_router.put("/admin/billing/plans/{plan_id}")
+async def admin_update_pricing_plan(plan_id: str, updates: PricingPlanUpdate, admin: Dict = Depends(get_admin)):
+    """Update a pricing plan"""
+    existing = await db.pricing_plans.find_one({"plan_id": plan_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    
+    update_data = {k: v for k, v in updates.model_dump().items() if v is not None}
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    update_data["updated_by"] = admin["user_id"]
+    
+    await db.pricing_plans.update_one({"plan_id": plan_id}, {"$set": update_data})
+    
+    updated = await db.pricing_plans.find_one({"plan_id": plan_id}, {"_id": 0})
+    logger.info(f"Admin {admin['email']} updated pricing plan: {plan_id}")
+    return updated
+
+@api_router.delete("/admin/billing/plans/{plan_id}")
+async def admin_delete_pricing_plan(plan_id: str, admin: Dict = Depends(get_super_admin)):
+    """Delete a pricing plan (super_admin only)"""
+    existing = await db.pricing_plans.find_one({"plan_id": plan_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    
+    # Check if any active subscriptions use this plan
+    active_subs = await db.subscriptions.count_documents({"plan_id": plan_id, "status": "active"})
+    if active_subs > 0:
+        raise HTTPException(status_code=400, detail=f"Cannot delete plan with {active_subs} active subscriptions")
+    
+    await db.pricing_plans.delete_one({"plan_id": plan_id})
+    logger.info(f"Super admin {admin['email']} deleted pricing plan: {plan_id}")
+    return {"message": "Plan deleted"}
+
+# Subscriptions Management
+@api_router.get("/admin/billing/subscriptions")
+async def admin_get_subscriptions(
+    status: Optional[str] = None,
+    plan_id: Optional[str] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all subscriptions with filters"""
+    query = {}
+    
+    # Build subscription status filter based on user subscription_status
+    user_query = {}
+    if status == "active":
+        user_query["subscription_status"] = "premium"
+    elif status == "free":
+        user_query["subscription_status"] = "free"
+    elif status == "expired":
+        user_query["subscription_status"] = "expired"
+    
+    if search:
+        user_query["$or"] = [
+            {"email": {"$regex": search, "$options": "i"}},
+            {"name": {"$regex": search, "$options": "i"}}
+        ]
+    
+    total = await db.users.count_documents(user_query)
+    users = await db.users.find(user_query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Enrich with transaction history
+    subscriptions = []
+    for user in users:
+        last_transaction = await db.payment_transactions.find_one(
+            {"user_id": user["user_id"], "payment_status": "paid"},
+            {"_id": 0}
+        )
+        
+        subscriptions.append({
+            "user_id": user["user_id"],
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "subscription_status": user.get("subscription_status", "free"),
+            "subscription_expires_at": user.get("subscription_expires_at"),
+            "last_payment": last_transaction,
+            "created_at": user.get("created_at")
+        })
+    
+    return {
+        "subscriptions": subscriptions,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/billing/subscriptions/{user_id}")
+async def admin_get_subscription_detail(user_id: str, admin: Dict = Depends(get_admin)):
+    """Get detailed subscription info for a user"""
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get all transactions for this user
+    transactions = await db.payment_transactions.find(
+        {"user_id": user_id},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(100)
+    
+    return {
+        "user": {
+            "user_id": user["user_id"],
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "subscription_status": user.get("subscription_status", "free"),
+            "subscription_expires_at": user.get("subscription_expires_at")
+        },
+        "transactions": transactions
+    }
+
+@api_router.put("/admin/billing/subscriptions/{user_id}")
+async def admin_update_subscription(user_id: str, updates: SubscriptionUpdate, admin: Dict = Depends(get_admin)):
+    """Update a user's subscription"""
+    user = await db.users.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    update_data = {}
+    
+    if updates.status:
+        update_data["subscription_status"] = updates.status
+    
+    if updates.expires_at:
+        update_data["subscription_expires_at"] = updates.expires_at
+    
+    if update_data:
+        update_data["subscription_updated_at"] = datetime.now(timezone.utc).isoformat()
+        update_data["subscription_updated_by"] = admin["user_id"]
+        
+        await db.users.update_one({"user_id": user_id}, {"$set": update_data})
+        
+        # Log the action
+        await db.admin_actions.insert_one({
+            "action_id": f"act_{uuid.uuid4().hex[:12]}",
+            "admin_id": admin["user_id"],
+            "action_type": "subscription_update",
+            "target_user_id": user_id,
+            "changes": update_data,
+            "notes": updates.notes,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+    
+    logger.info(f"Admin {admin['email']} updated subscription for user {user_id}")
+    
+    updated_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    return {
+        "user_id": updated_user["user_id"],
+        "email": updated_user.get("email"),
+        "subscription_status": updated_user.get("subscription_status"),
+        "subscription_expires_at": updated_user.get("subscription_expires_at")
+    }
+
+@api_router.post("/admin/billing/subscriptions/{user_id}/extend")
+async def admin_extend_subscription(user_id: str, days: int = 30, admin: Dict = Depends(get_admin)):
+    """Extend a user's subscription by specified days"""
+    user = await db.users.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    current_expires = user.get("subscription_expires_at")
+    if current_expires:
+        if isinstance(current_expires, str):
+            current_expires = datetime.fromisoformat(current_expires.replace('Z', '+00:00'))
+        new_expires = current_expires + timedelta(days=days)
+    else:
+        new_expires = datetime.now(timezone.utc) + timedelta(days=days)
+    
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "subscription_status": "premium",
+            "subscription_expires_at": new_expires.isoformat(),
+            "subscription_updated_at": datetime.now(timezone.utc).isoformat(),
+            "subscription_updated_by": admin["user_id"]
+        }}
+    )
+    
+    # Log the action
+    await db.admin_actions.insert_one({
+        "action_id": f"act_{uuid.uuid4().hex[:12]}",
+        "admin_id": admin["user_id"],
+        "action_type": "subscription_extend",
+        "target_user_id": user_id,
+        "details": {"days_added": days, "new_expires_at": new_expires.isoformat()},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    logger.info(f"Admin {admin['email']} extended subscription for user {user_id} by {days} days")
+    return {"message": f"Subscription extended by {days} days", "new_expires_at": new_expires.isoformat()}
+
+@api_router.post("/admin/billing/subscriptions/{user_id}/cancel")
+async def admin_cancel_subscription(user_id: str, reason: str = "Administrative action", admin: Dict = Depends(get_admin)):
+    """Cancel a user's subscription"""
+    user = await db.users.find_one({"user_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "subscription_status": "cancelled",
+            "subscription_cancelled_at": datetime.now(timezone.utc).isoformat(),
+            "subscription_cancelled_by": admin["user_id"],
+            "subscription_cancel_reason": reason
+        }}
+    )
+    
+    # Log the action
+    await db.admin_actions.insert_one({
+        "action_id": f"act_{uuid.uuid4().hex[:12]}",
+        "admin_id": admin["user_id"],
+        "action_type": "subscription_cancel",
+        "target_user_id": user_id,
+        "details": {"reason": reason},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    logger.info(f"Admin {admin['email']} cancelled subscription for user {user_id}")
+    return {"message": "Subscription cancelled"}
+
+# Transactions/Invoices Management
+@api_router.get("/admin/billing/transactions")
+async def admin_get_transactions(
+    status: Optional[str] = None,
+    plan: Optional[str] = None,
+    user_id: Optional[str] = None,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all transactions with filters"""
+    query = {}
+    
+    if status:
+        query["payment_status"] = status
+    if plan:
+        query["plan"] = plan
+    if user_id:
+        query["user_id"] = user_id
+    if start_date:
+        query["created_at"] = {"$gte": start_date}
+    if end_date:
+        if "created_at" in query:
+            query["created_at"]["$lte"] = end_date
+        else:
+            query["created_at"] = {"$lte": end_date}
+    
+    total = await db.payment_transactions.count_documents(query)
+    transactions = await db.payment_transactions.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Enrich with user info
+    for txn in transactions:
+        user = await db.users.find_one({"user_id": txn.get("user_id")}, {"_id": 0, "email": 1, "name": 1})
+        txn["user"] = user
+    
+    return {
+        "transactions": transactions,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/billing/transactions/{transaction_id}")
+async def admin_get_transaction(transaction_id: str, admin: Dict = Depends(get_admin)):
+    """Get single transaction details"""
+    txn = await db.payment_transactions.find_one({"transaction_id": transaction_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    # Get user info
+    user = await db.users.find_one({"user_id": txn.get("user_id")}, {"_id": 0})
+    txn["user"] = user
+    
+    return txn
+
+@api_router.post("/admin/billing/transactions/{transaction_id}/refund")
+async def admin_refund_transaction(transaction_id: str, refund: RefundRequest, admin: Dict = Depends(get_super_admin)):
+    """Process a refund for a transaction (super_admin only)"""
+    txn = await db.payment_transactions.find_one({"transaction_id": transaction_id})
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    if txn.get("payment_status") != "paid":
+        raise HTTPException(status_code=400, detail="Can only refund paid transactions")
+    
+    if txn.get("refund_status") == "refunded":
+        raise HTTPException(status_code=400, detail="Transaction already refunded")
+    
+    refund_amount = refund.amount if refund.amount else txn.get("amount")
+    
+    # Update transaction
+    await db.payment_transactions.update_one(
+        {"transaction_id": transaction_id},
+        {"$set": {
+            "refund_status": "refunded",
+            "refund_amount": refund_amount,
+            "refund_reason": refund.reason,
+            "refunded_at": datetime.now(timezone.utc).isoformat(),
+            "refunded_by": admin["user_id"]
+        }}
+    )
+    
+    # If full refund, update user subscription
+    if refund_amount >= txn.get("amount", 0):
+        await db.users.update_one(
+            {"user_id": txn.get("user_id")},
+            {"$set": {
+                "subscription_status": "free",
+                "subscription_expires_at": None
+            }}
+        )
+    
+    # Log the action
+    await db.admin_actions.insert_one({
+        "action_id": f"act_{uuid.uuid4().hex[:12]}",
+        "admin_id": admin["user_id"],
+        "action_type": "refund",
+        "target_transaction_id": transaction_id,
+        "details": {"amount": refund_amount, "reason": refund.reason},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    logger.info(f"Super admin {admin['email']} processed refund for transaction {transaction_id}")
+    return {"message": "Refund processed", "refund_amount": refund_amount}
+
+# Revenue Analytics
+@api_router.get("/admin/billing/analytics")
+async def admin_billing_analytics(
+    period: str = "monthly",  # daily, weekly, monthly, yearly
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """Get detailed billing analytics"""
+    
+    now = datetime.now(timezone.utc)
+    
+    # Default date ranges
+    if not start_date:
+        if period == "daily":
+            start_date = (now - timedelta(days=30)).isoformat()
+        elif period == "weekly":
+            start_date = (now - timedelta(weeks=12)).isoformat()
+        elif period == "monthly":
+            start_date = (now - timedelta(days=365)).isoformat()
+        else:
+            start_date = (now - timedelta(days=365*3)).isoformat()
+    
+    if not end_date:
+        end_date = now.isoformat()
+    
+    # Date format for grouping
+    date_format = {
+        "daily": {"$substr": ["$created_at", 0, 10]},
+        "weekly": {"$substr": ["$created_at", 0, 10]},  # Will group by week later
+        "monthly": {"$substr": ["$created_at", 0, 7]},
+        "yearly": {"$substr": ["$created_at", 0, 4]}
+    }
+    
+    # Revenue over time
+    revenue_pipeline = [
+        {"$match": {"payment_status": "paid", "created_at": {"$gte": start_date, "$lte": end_date}}},
+        {"$addFields": {"period": date_format.get(period, date_format["monthly"])}},
+        {"$group": {
+            "_id": "$period",
+            "revenue": {"$sum": "$amount"},
+            "transactions": {"$sum": 1}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    revenue_over_time = await db.payment_transactions.aggregate(revenue_pipeline).to_list(365)
+    
+    # Plan performance
+    plan_pipeline = [
+        {"$match": {"payment_status": "paid", "created_at": {"$gte": start_date, "$lte": end_date}}},
+        {"$group": {
+            "_id": "$plan",
+            "revenue": {"$sum": "$amount"},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"revenue": -1}}
+    ]
+    plan_performance = await db.payment_transactions.aggregate(plan_pipeline).to_list(20)
+    
+    # Conversion rate (free to paid)
+    total_users = await db.users.count_documents({})
+    paid_users = await db.users.count_documents({"subscription_status": {"$in": ["premium", "expired"]}})
+    conversion_rate = round((paid_users / max(total_users, 1)) * 100, 2)
+    
+    # Churn (expired subscriptions this period)
+    churned = await db.users.count_documents({
+        "subscription_status": "expired",
+        "subscription_expires_at": {"$gte": start_date, "$lte": end_date}
+    })
+    
+    # Average revenue per user (ARPU)
+    total_revenue_result = await db.payment_transactions.aggregate([
+        {"$match": {"payment_status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]).to_list(1)
+    total_revenue = total_revenue_result[0]["total"] if total_revenue_result else 0
+    arpu = round(total_revenue / max(paid_users, 1), 2)
+    
+    return {
+        "period": period,
+        "start_date": start_date,
+        "end_date": end_date,
+        "revenue_over_time": revenue_over_time,
+        "plan_performance": plan_performance,
+        "metrics": {
+            "conversion_rate": conversion_rate,
+            "churned_subscriptions": churned,
+            "arpu": arpu,
+            "total_revenue": total_revenue
+        }
+    }
+
+# Seed default pricing plans
+@api_router.post("/admin/billing/seed-plans")
+async def seed_pricing_plans(admin: Dict = Depends(get_admin)):
+    """Seed default pricing plans"""
+    existing = await db.pricing_plans.count_documents({})
+    if existing > 0:
+        return {"message": "Plans already seeded"}
+    
+    default_plans = [
+        {
+            "plan_id": "free",
+            "name": "Free",
+            "description": "Get started with basic features",
+            "price": 0.0,
+            "currency": "usd",
+            "billing_period": "monthly",
+            "features": [
+                "Access to 2 certifications",
+                "5 labs per month",
+                "Community forums",
+                "Basic progress tracking"
+            ],
+            "is_active": True,
+            "is_featured": False,
+            "trial_days": 0,
+            "order": 0,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["user_id"]
+        },
+        {
+            "plan_id": "monthly",
+            "name": "Pro Monthly",
+            "description": "Full access with monthly billing",
+            "price": 29.99,
+            "currency": "usd",
+            "billing_period": "monthly",
+            "features": [
+                "Unlimited certifications",
+                "Unlimited labs",
+                "Practice exams",
+                "Project workspace",
+                "Certificate generation",
+                "Priority support"
+            ],
+            "is_active": True,
+            "is_featured": False,
+            "trial_days": 7,
+            "order": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["user_id"]
+        },
+        {
+            "plan_id": "yearly",
+            "name": "Pro Yearly",
+            "description": "Best value - save 44%!",
+            "price": 199.99,
+            "currency": "usd",
+            "billing_period": "yearly",
+            "features": [
+                "Everything in Pro Monthly",
+                "Save $160/year",
+                "Exclusive badge",
+                "Early access to new features"
+            ],
+            "is_active": True,
+            "is_featured": True,
+            "trial_days": 14,
+            "order": 2,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["user_id"]
+        },
+        {
+            "plan_id": "team",
+            "name": "Team",
+            "description": "For teams and organizations",
+            "price": 499.99,
+            "currency": "usd",
+            "billing_period": "yearly",
+            "features": [
+                "Everything in Pro Yearly",
+                "Up to 10 team members",
+                "Team analytics dashboard",
+                "Admin controls",
+                "Custom learning paths",
+                "Dedicated support"
+            ],
+            "is_active": True,
+            "is_featured": False,
+            "trial_days": 14,
+            "max_users": 10,
+            "order": 3,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["user_id"]
+        }
+    ]
+    
+    await db.pricing_plans.insert_many(default_plans)
+    logger.info(f"Admin {admin['email']} seeded default pricing plans")
+    return {"message": "Default plans seeded", "count": len(default_plans)}
+
+# Public pricing plans endpoint (for checkout page)
+@api_router.get("/pricing/plans")
+async def get_public_pricing_plans():
+    """Get active pricing plans for public display"""
+    plans = await db.pricing_plans.find({"is_active": True}, {"_id": 0}).sort("order", 1).to_list(10)
+    return plans
+
 
 @api_router.get("/")
 async def root():
