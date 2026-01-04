@@ -3214,8 +3214,7 @@ async def assign_user_role(
 async def suspend_user(
     user_id: str,
     reason: str,
-    request: Request,
-    admin: Dict = Depends(lambda r: require_admin(r, ["super_admin", "support_admin"]))
+    admin: Dict = Depends(get_support_or_super_admin)
 ):
     """Suspend a user account"""
     
