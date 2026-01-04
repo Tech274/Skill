@@ -264,6 +264,16 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - `DELETE /api/admin/users/{user_id}` - Delete user (super_admin only)
 - `GET /api/admin/analytics/overview` - Detailed analytics
 - `GET /api/admin/users/{user_id}/activity` - User activity details
+- `GET /api/admin/content/stats` - Content statistics overview
+- `GET/POST /api/admin/certifications` - List/create certifications
+- `PUT/DELETE /api/admin/certifications/{cert_id}` - Update/delete certification
+- `GET/POST /api/admin/labs` - List/create labs (filterable by cert_id)
+- `PUT/DELETE /api/admin/labs/{lab_id}` - Update/delete lab
+- `GET/POST /api/admin/assessments` - List/create assessments (filterable by cert_id)
+- `PUT/DELETE /api/admin/assessments/{assessment_id}` - Update/delete assessment
+- `GET/POST /api/admin/projects` - List/create projects (filterable by cert_id)
+- `PUT/DELETE /api/admin/projects/{project_id}` - Update/delete project
+- `POST /api/admin/{content_type}/reorder` - Reorder content items
 
 ### Admin Frontend Routes
 - `/admin` - Admin Dashboard (protected)
