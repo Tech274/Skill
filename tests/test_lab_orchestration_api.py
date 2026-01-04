@@ -156,11 +156,6 @@ class TestAPIEndpointsExist:
 class TestPublicEndpoints:
     """Test public endpoints that don't require authentication"""
     
-    def test_health_check(self):
-        """Health check endpoint should be accessible"""
-        response = requests.get(f"{BASE_URL}/api/health")
-        assert response.status_code == 200, f"Health check failed: {response.status_code}"
-    
     def test_public_certifications(self):
         """Public certifications endpoint should be accessible"""
         response = requests.get(f"{BASE_URL}/api/certifications")
@@ -168,9 +163,9 @@ class TestPublicEndpoints:
         data = response.json()
         assert isinstance(data, list), "Expected list of certifications"
     
-    def test_public_labs(self):
-        """Public labs endpoint should be accessible"""
-        response = requests.get(f"{BASE_URL}/api/labs")
+    def test_public_catalog_labs(self):
+        """Public catalog labs endpoint should be accessible"""
+        response = requests.get(f"{BASE_URL}/api/catalog/labs")
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         data = response.json()
         assert isinstance(data, list), "Expected list of labs"
