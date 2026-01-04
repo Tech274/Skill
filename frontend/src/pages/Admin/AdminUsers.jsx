@@ -334,17 +334,18 @@ export default function AdminUsers() {
 
       {/* Role Change Modal */}
       {showRoleModal && selectedUser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" data-testid="role-change-modal">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-bold mb-4">Change User Role</h3>
             <p className="text-gray-600 mb-4">
               Change role for <strong>{selectedUser.name}</strong>
             </p>
-            <div className="space-y-2">
+            <div className="space-y-2" data-testid="role-options">
               {['learner', 'super_admin', 'content_admin', 'lab_admin', 'finance_admin', 'support_admin'].map(role => (
                 <button
                   key={role}
                   onClick={() => handleRoleChange(selectedUser.user_id, role)}
+                  data-testid={`role-option-${role}`}
                   className={`w-full px-4 py-2 text-left rounded-lg border ${
                     selectedUser.role === role ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:bg-gray-50'
                   }`}
@@ -354,7 +355,7 @@ export default function AdminUsers() {
               ))}
             </div>
             <div className="mt-6 flex justify-end space-x-3">
-              <Button variant="outline" onClick={() => setShowRoleModal(false)}>
+              <Button variant="outline" onClick={() => setShowRoleModal(false)} data-testid="role-modal-cancel">
                 Cancel
               </Button>
             </div>
@@ -364,7 +365,7 @@ export default function AdminUsers() {
 
       {/* Suspend Modal */}
       {showSuspendModal && selectedUser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" data-testid="suspend-modal">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h3 className="text-lg font-bold mb-4">Suspend User</h3>
             <p className="text-gray-600 mb-4">
@@ -374,6 +375,7 @@ export default function AdminUsers() {
               value={suspendReason}
               onChange={(e) => setSuspendReason(e.target.value)}
               placeholder="Reason for suspension..."
+              data-testid="suspend-reason-input"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               rows="4"
             />
@@ -381,12 +383,13 @@ export default function AdminUsers() {
               <Button variant="outline" onClick={() => {
                 setShowSuspendModal(false);
                 setSuspendReason('');
-              }}>
+              }} data-testid="suspend-modal-cancel">
                 Cancel
               </Button>
               <Button 
                 onClick={() => handleSuspend(selectedUser.user_id)}
                 className="bg-red-600 hover:bg-red-700"
+                data-testid="suspend-confirm-btn"
               >
                 Suspend User
               </Button>
