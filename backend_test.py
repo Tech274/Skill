@@ -1123,6 +1123,30 @@ class SkillTrack365APITester:
         self.test_assessments_catalog_api()
         self.test_assessments_catalog_filters()
         
+        # Test NEW ADMIN FOUNDATION FEATURES
+        print("\n🔐 Testing NEW ADMIN FOUNDATION FEATURES")
+        
+        # Admin Authentication Protection
+        print("Testing Admin Authentication Protection...")
+        self.test_admin_endpoints_without_auth()
+        self.test_admin_endpoints_with_learner_auth()
+        self.test_admin_user_management_endpoints_without_auth()
+        
+        # Admin Endpoint Structure Tests
+        print("Testing Admin Endpoint Structures...")
+        self.test_admin_dashboard_structure()
+        self.test_admin_users_list_structure()
+        self.test_admin_analytics_structure()
+        self.test_role_assignment_endpoint_structure()
+        self.test_user_suspension_endpoints_structure()
+        self.test_user_deletion_endpoint_structure()
+        self.test_user_activity_endpoint_structure()
+        
+        # User Model and Auth Tests
+        print("Testing User Model and Auth Enhancements...")
+        self.test_auth_me_includes_role()
+        self.test_user_model_fields()
+        
         # Test auth protection
         print("\n🔒 Testing Authentication Protection")
         self.test_auth_endpoints_without_auth()
