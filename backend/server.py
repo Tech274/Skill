@@ -249,6 +249,19 @@ async def require_super_admin(request: Request) -> Dict:
     """Require user to be a super admin"""
     return await require_admin(request, allowed_roles=["super_admin"])
 
+# Dependency functions for FastAPI
+async def get_admin(request: Request) -> Dict:
+    """Dependency to get any admin user"""
+    return await require_admin(request)
+
+async def get_super_admin(request: Request) -> Dict:
+    """Dependency to get super admin user"""
+    return await require_super_admin(request)
+
+async def get_support_or_super_admin(request: Request) -> Dict:
+    """Dependency to get support or super admin user"""
+    return await require_admin(request, allowed_roles=["super_admin", "support_admin"])
+
 
 # ============== AUTH ROUTES ==============
 
