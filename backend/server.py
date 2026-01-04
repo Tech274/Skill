@@ -173,6 +173,17 @@ class VideoContentModel(BaseModel):
     thumbnail_url: Optional[str] = None
     order: int = 0
 
+
+# Admin-specific models
+class AdminUserUpdate(BaseModel):
+    role: Optional[str] = None
+    subscription_status: Optional[str] = None
+    is_suspended: Optional[bool] = None
+    suspended_reason: Optional[str] = None
+
+class AdminRoleAssignment(BaseModel):
+    role: str  # super_admin, content_admin, lab_admin, finance_admin, support_admin, learner
+
 # ============== AUTH HELPERS ==============
 
 async def get_current_user(request: Request) -> Optional[Dict]:
