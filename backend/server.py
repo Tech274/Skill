@@ -643,7 +643,7 @@ async def create_checkout(data: CheckoutRequest, request: Request, user: Dict = 
 
 @api_router.get("/checkout/status/{session_id}")
 async def check_payment_status(session_id: str, user: Dict = Depends(require_auth)):
-    host_url = str(os.environ.get('REACT_APP_BACKEND_URL', 'http://localhost:8001'))
+    host_url = str(os.environ['REACT_APP_BACKEND_URL'])
     webhook_url = f"{host_url}/api/webhook/stripe"
     
     stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url=webhook_url)
