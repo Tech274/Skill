@@ -184,6 +184,68 @@ class AdminUserUpdate(BaseModel):
 class AdminRoleAssignment(BaseModel):
     role: str  # super_admin, content_admin, lab_admin, finance_admin, support_admin, learner
 
+
+# ============== LAB ORCHESTRATION MODELS ==============
+
+class CloudProvider(BaseModel):
+    """Cloud provider configuration"""
+    model_config = ConfigDict(extra="ignore")
+    provider_id: str
+    name: str  # AWS, GCP, Azure
+    is_enabled: bool = True
+    regions: List[str] = []
+    resource_types: List[str] = []  # VM, Container, Storage, etc.
+
+class LabInstance(BaseModel):
+    """Active lab instance for a user"""
+    model_config = ConfigDict(extra="ignore")
+    instance_id: str = Field(default_factory=lambda: f"inst_{uuid.uuid4().hex[:12]}")
+    user_id: str
+    lab_id: str
+    cert_id: str
+    provider: str  # aws, gcp, azure
+    region: str
+    status: str = "provisioning"  # provisioning, running, suspended, terminated, error
+    resources: Dict[str, Any] = {}  # Allocated resources
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: Optional[datetime] = None
+    terminated_at: Optional[datetime] = None
+    cost_estimate: float = 0.0
+    error_message: Optional[str] = None
+
+class ResourceQuota(BaseModel):
+    """User resource quota configuration"""
+    model_config = ConfigDict(extra="ignore")
+    quota_id: str = Field(default_factory=lambda: f"quota_{uuid.uuid4().hex[:12]}")
+    user_id: str
+    max_concurrent_labs: int = 2
+    max_daily_lab_hours: float = 4.0
+    max_monthly_lab_hours: float = 40.0
+    allowed_providers: List[str] = ["aws", "gcp", "azure"]
+    allowed_instance_types: List[str] = ["small", "medium"]
+    storage_limit_gb: int = 10
+    current_usage: Dict[str, Any] = {}
+    reset_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class LabInstanceCreate(BaseModel):
+    lab_id: str
+    provider: str = "aws"
+    region: str = "us-east-1"
+    instance_type: str = "small"
+
+class LabInstanceAction(BaseModel):
+    action: str  # suspend, resume, terminate, extend
+
+class QuotaUpdate(BaseModel):
+    max_concurrent_labs: Optional[int] = None
+    max_daily_lab_hours: Optional[float] = None
+    max_monthly_lab_hours: Optional[float] = None
+    allowed_providers: Optional[List[str]] = None
+    allowed_instance_types: Optional[List[str]] = None
+    storage_limit_gb: Optional[int] = None
+
+
 # ============== AUTH HELPERS ==============
 
 async def get_current_user(request: Request) -> Optional[Dict]:
