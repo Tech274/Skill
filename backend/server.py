@@ -3001,6 +3001,406 @@ async def get_assessments_catalog(
         }
     }
 
+
+
+# ============== ADMIN ROUTES ==============
+
+@api_router.get("/admin/dashboard")
+async def get_admin_dashboard(request: Request, admin: Dict = Depends(lambda r: require_admin(r))):
+    """Get admin dashboard overview statistics"""
+    
+    # User statistics
+    total_users = await db.users.count_documents({})
+    active_users_7d = await db.users.count_documents({
+        "last_login": {"$gte": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()}
+    })
+    suspended_users = await db.users.count_documents({"is_suspended": True})
+    premium_users = await db.users.count_documents({"subscription_status": "premium"})
+    
+    # Role distribution
+    role_distribution = {}
+    for role in ["learner", "super_admin", "content_admin", "lab_admin", "finance_admin", "support_admin"]:
+        count = await db.users.count_documents({"role": role})
+        role_distribution[role] = count
+    
+    # Content statistics
+    total_certifications = await db.certifications.count_documents({})
+    total_labs = await db.labs.count_documents({})
+    total_assessments = await db.assessments.count_documents({})
+    total_projects = await db.projects.count_documents({})
+    total_videos = await db.videos.count_documents({})
+    
+    # Progress statistics
+    total_progress_records = await db.user_progress.count_documents({})
+    avg_readiness_pipeline = [
+        {"$group": {"_id": None, "avg_readiness": {"$avg": "$readiness_percentage"}}}
+    ]
+    avg_readiness_result = await db.user_progress.aggregate(avg_readiness_pipeline).to_list(length=1)
+    avg_readiness = avg_readiness_result[0]["avg_readiness"] if avg_readiness_result else 0
+    
+    # Engagement statistics
+    total_discussions = await db.discussions.count_documents({})
+    total_certificates = await db.certificates.count_documents({})
+    total_badges_earned = await db.user_badges.count_documents({"earned": True})
+    
+    # Recent activity (last 7 days)
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    new_users_7d = await db.users.count_documents({"created_at": {"$gte": seven_days_ago}})
+    new_discussions_7d = await db.discussions.count_documents({"created_at": {"$gte": seven_days_ago}})
+    
+    # Revenue statistics (if finance admin or super admin)
+    revenue_stats = {}
+    if admin.get("role") in ["super_admin", "finance_admin"]:
+        total_transactions = await db.payment_transactions.count_documents({})
+        paid_transactions = await db.payment_transactions.count_documents({"payment_status": "paid"})
+        
+        # Calculate total revenue (assuming $29 monthly, $290 yearly)
+        revenue_pipeline = [
+            {"$match": {"payment_status": "paid"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+        ]
+        revenue_result = await db.payment_transactions.aggregate(revenue_pipeline).to_list(length=1)
+        total_revenue = revenue_result[0]["total"] if revenue_result else 0
+        
+        revenue_stats = {
+            "total_transactions": total_transactions,
+            "paid_transactions": paid_transactions,
+            "total_revenue": total_revenue,
+            "premium_users": premium_users
+        }
+    
+    return {
+        "overview": {
+            "total_users": total_users,
+            "active_users_7d": active_users_7d,
+            "suspended_users": suspended_users,
+            "premium_users": premium_users,
+            "new_users_7d": new_users_7d
+        },
+        "roles": role_distribution,
+        "content": {
+            "certifications": total_certifications,
+            "labs": total_labs,
+            "assessments": total_assessments,
+            "projects": total_projects,
+            "videos": total_videos
+        },
+        "learning": {
+            "total_enrollments": total_progress_records,
+            "avg_readiness_percentage": round(avg_readiness, 2),
+            "total_certificates_issued": total_certificates,
+            "total_badges_earned": total_badges_earned
+        },
+        "engagement": {
+            "total_discussions": total_discussions,
+            "new_discussions_7d": new_discussions_7d
+        },
+        "revenue": revenue_stats
+    }
+
+@api_router.get("/admin/users")
+async def get_admin_users(
+    request: Request,
+    page: int = 1,
+    limit: int = 20,
+    search: Optional[str] = None,
+    role: Optional[str] = None,
+    status: Optional[str] = None,  # active, suspended, premium
+    admin: Dict = Depends(lambda r: require_admin(r))
+):
+    """Get paginated list of users with filters"""
+    
+    query = {}
+    
+    # Search filter
+    if search:
+        query["$or"] = [
+            {"email": {"$regex": search, "$options": "i"}},
+            {"name": {"$regex": search, "$options": "i"}},
+            {"user_id": {"$regex": search, "$options": "i"}}
+        ]
+    
+    # Role filter
+    if role:
+        query["role"] = role
+    
+    # Status filter
+    if status == "suspended":
+        query["is_suspended"] = True
+    elif status == "active":
+        query["is_suspended"] = {"$ne": True}
+    elif status == "premium":
+        query["subscription_status"] = "premium"
+    
+    # Get total count
+    total = await db.users.count_documents(query)
+    
+    # Get paginated users
+    skip = (page - 1) * limit
+    users = await db.users.find(query, {"_id": 0}) \
+        .sort("created_at", -1) \
+        .skip(skip) \
+        .limit(limit) \
+        .to_list(length=limit)
+    
+    # Get progress summary for each user
+    for user in users:
+        progress_count = await db.user_progress.count_documents({"user_id": user["user_id"]})
+        user["enrollments_count"] = progress_count
+        
+        # Get total XP
+        xp_pipeline = [
+            {"$match": {"user_id": user["user_id"]}},
+            {"$group": {"_id": None, "total_xp": {"$sum": "$total_xp"}}}
+        ]
+        xp_result = await db.user_progress.aggregate(xp_pipeline).to_list(length=1)
+        user["total_xp"] = xp_result[0]["total_xp"] if xp_result else 0
+    
+    return {
+        "users": users,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit
+    }
+
+@api_router.put("/admin/users/{user_id}/role")
+async def assign_user_role(
+    user_id: str,
+    role_data: AdminRoleAssignment,
+    request: Request,
+    admin: Dict = Depends(lambda r: require_super_admin(r))
+):
+    """Assign role to a user (super admin only)"""
+    
+    valid_roles = ["learner", "super_admin", "content_admin", "lab_admin", "finance_admin", "support_admin"]
+    if role_data.role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}")
+    
+    # Cannot change your own role
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    
+    # Update user role
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"role": role_data.role}}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    updated_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    
+    logger.info(f"Admin {admin['email']} changed role of user {user_id} to {role_data.role}")
+    
+    return {
+        "message": "Role updated successfully",
+        "user": updated_user
+    }
+
+@api_router.post("/admin/users/{user_id}/suspend")
+async def suspend_user(
+    user_id: str,
+    reason: str,
+    request: Request,
+    admin: Dict = Depends(lambda r: require_admin(r, ["super_admin", "support_admin"]))
+):
+    """Suspend a user account"""
+    
+    # Cannot suspend yourself
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot suspend your own account")
+    
+    # Cannot suspend other super admins (unless you're also super admin)
+    target_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if target_user.get("role") == "super_admin" and admin.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Cannot suspend super admin")
+    
+    # Suspend user
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "is_suspended": True,
+            "suspended_reason": reason,
+            "suspended_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Invalidate all user sessions
+    await db.user_sessions.delete_many({"user_id": user_id})
+    
+    logger.info(f"Admin {admin['email']} suspended user {user_id}. Reason: {reason}")
+    
+    return {
+        "message": "User suspended successfully",
+        "user_id": user_id,
+        "reason": reason
+    }
+
+@api_router.post("/admin/users/{user_id}/restore")
+async def restore_user(
+    user_id: str,
+    request: Request,
+    admin: Dict = Depends(lambda r: require_admin(r, ["super_admin", "support_admin"]))
+):
+    """Restore a suspended user account"""
+    
+    result = await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "is_suspended": False,
+            "suspended_reason": None,
+            "suspended_at": None
+        }}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    logger.info(f"Admin {admin['email']} restored user {user_id}")
+    
+    return {
+        "message": "User restored successfully",
+        "user_id": user_id
+    }
+
+@api_router.delete("/admin/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    request: Request,
+    admin: Dict = Depends(lambda r: require_super_admin(r))
+):
+    """Delete a user account permanently (super admin only)"""
+    
+    # Cannot delete yourself
+    if user_id == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    # Delete user and all related data
+    await db.users.delete_one({"user_id": user_id})
+    await db.user_sessions.delete_many({"user_id": user_id})
+    await db.user_progress.delete_many({"user_id": user_id})
+    await db.user_badges.delete_many({"user_id": user_id})
+    await db.bookmarks.delete_many({"user_id": user_id})
+    await db.notes.delete_many({"user_id": user_id})
+    await db.certificates.delete_many({"user_id": user_id})
+    await db.discussions.delete_many({"author_id": user_id})
+    await db.payment_transactions.delete_many({"user_id": user_id})
+    
+    logger.warning(f"Admin {admin['email']} DELETED user {user_id}")
+    
+    return {
+        "message": "User deleted successfully",
+        "user_id": user_id
+    }
+
+@api_router.get("/admin/analytics/overview")
+async def get_admin_analytics(
+    request: Request,
+    days: int = 30,
+    admin: Dict = Depends(lambda r: require_admin(r))
+):
+    """Get platform analytics for the specified time period"""
+    
+    start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    
+    # User growth over time
+    user_growth_pipeline = [
+        {"$match": {"created_at": {"$gte": start_date}}},
+        {"$group": {
+            "_id": {"$substr": ["$created_at", 0, 10]},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    user_growth = await db.users.aggregate(user_growth_pipeline).to_list(length=days)
+    
+    # Active users over time
+    active_users_pipeline = [
+        {"$match": {"last_login": {"$gte": start_date}}},
+        {"$group": {
+            "_id": {"$substr": ["$last_login", 0, 10]},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    active_users = await db.user_progress.aggregate(active_users_pipeline).to_list(length=days)
+    
+    # Content completion rates
+    completion_stats = {
+        "labs": await db.user_progress.count_documents({"labs_completed.0": {"$exists": True}}),
+        "assessments": await db.user_progress.count_documents({"assessments_completed.0": {"$exists": True}}),
+        "projects": await db.user_progress.count_documents({"projects_completed.0": {"$exists": True}})
+    }
+    
+    # Top certifications by enrollment
+    top_certs_pipeline = [
+        {"$group": {"_id": "$cert_id", "enrollments": {"$sum": 1}}},
+        {"$sort": {"enrollments": -1}},
+        {"$limit": 10}
+    ]
+    top_certs = await db.user_progress.aggregate(top_certs_pipeline).to_list(length=10)
+    
+    # Enrich with certification names
+    for cert in top_certs:
+        cert_doc = await db.certifications.find_one({"cert_id": cert["_id"]}, {"_id": 0, "name": 1, "vendor": 1})
+        if cert_doc:
+            cert["name"] = cert_doc["name"]
+            cert["vendor"] = cert_doc["vendor"]
+    
+    return {
+        "period_days": days,
+        "user_growth": user_growth,
+        "active_users": active_users,
+        "completion_stats": completion_stats,
+        "top_certifications": top_certs
+    }
+
+@api_router.get("/admin/users/{user_id}/activity")
+async def get_user_activity(
+    user_id: str,
+    request: Request,
+    admin: Dict = Depends(lambda r: require_admin(r))
+):
+    """Get detailed activity log for a specific user"""
+    
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get all progress records
+    progress = await db.user_progress.find({"user_id": user_id}, {"_id": 0}).to_list(length=100)
+    
+    # Get all certificates
+    certificates = await db.certificates.find({"user_id": user_id}, {"_id": 0}).to_list(length=100)
+    
+    # Get badges
+    badges = await db.user_badges.find_one({"user_id": user_id}, {"_id": 0})
+    
+    # Get discussions
+    discussions = await db.discussions.find({"author_id": user_id}, {"_id": 0}).to_list(length=100)
+    
+    # Get payment transactions (if finance admin or super admin)
+    transactions = []
+    if admin.get("role") in ["super_admin", "finance_admin"]:
+        transactions = await db.payment_transactions.find({"user_id": user_id}, {"_id": 0}).to_list(length=100)
+    
+    return {
+        "user": user,
+        "progress": progress,
+        "certificates": certificates,
+        "badges": badges,
+        "discussions": discussions,
+        "transactions": transactions
+    }
+
 @api_router.get("/")
 async def root():
     return {"message": "SkillTrack365 API", "version": "1.0.0"}
