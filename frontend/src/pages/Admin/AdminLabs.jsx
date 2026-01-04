@@ -146,11 +146,13 @@ export default function AdminLabs() {
     loadData();
   }, [fetchDashboard, fetchInstances, fetchQuotas, fetchProviders, fetchMetrics]);
 
+  // Re-fetch instances when filters change
   useEffect(() => {
-    if (activeTab === 'instances') {
+    if (activeTab === 'instances' && !loading) {
       fetchInstances();
     }
-  }, [activeTab, statusFilter, providerFilter, fetchInstances]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, providerFilter]);
 
   const handleInstanceAction = async (instanceId, action) => {
     try {
