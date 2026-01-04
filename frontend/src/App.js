@@ -116,6 +116,73 @@ const ProtectedRoute = ({ children }) => {
   return children;
 };
 
+// Admin Route Component
+const AdminRoute = ({ children, allowedRoles = [] }) => {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Check if user is suspended
+  if (user.is_suspended) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <div className="bg-red-900/20 border border-red-500 rounded-lg p-8 max-w-md">
+          <h2 className="text-xl font-bold text-red-400 mb-4">Account Suspended</h2>
+          <p className="text-zinc-300">{user.suspended_reason || 'Your account has been suspended. Please contact support.'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Check if user has admin role
+  const adminRoles = ['super_admin', 'content_admin', 'lab_admin', 'finance_admin', 'support_admin'];
+  const userRole = user.role || 'learner';
+
+  // Super admin has access to everything
+  if (userRole === 'super_admin') {
+    return children;
+  }
+
+  // If specific roles are required, check if user has one
+  if (allowedRoles.length > 0) {
+    if (!allowedRoles.includes(userRole)) {
+      return (
+        <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+          <div className="bg-red-900/20 border border-red-500 rounded-lg p-8 max-w-md">
+            <h2 className="text-xl font-bold text-red-400 mb-4">Access Denied</h2>
+            <p className="text-zinc-300">You don't have permission to access this area.</p>
+          </div>
+        </div>
+      );
+    }
+  } else {
+    // No specific roles required, just check if user is any type of admin
+    if (!adminRoles.includes(userRole)) {
+      return (
+        <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+          <div className="bg-red-900/20 border border-red-500 rounded-lg p-8 max-w-md">
+            <h2 className="text-xl font-bold text-red-400 mb-4">Admin Access Required</h2>
+            <p className="text-zinc-300">You need admin privileges to access this area.</p>
+          </div>
+        </div>
+      );
+    }
+  }
+
+  return children;
+};
+
 // App Router Component
 const AppRouter = () => {
   const location = useLocation();
