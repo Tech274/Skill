@@ -3019,7 +3019,7 @@ async def get_assessments_catalog(
 # ============== ADMIN ROUTES ==============
 
 @api_router.get("/admin/dashboard")
-async def get_admin_dashboard(request: Request, admin: Dict = Depends(lambda r: require_admin(r))):
+async def get_admin_dashboard(admin: Dict = Depends(get_admin)):
     """Get admin dashboard overview statistics"""
     
     # User statistics
