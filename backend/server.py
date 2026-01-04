@@ -3283,8 +3283,7 @@ async def restore_user(
 @api_router.delete("/admin/users/{user_id}")
 async def delete_user(
     user_id: str,
-    request: Request,
-    admin: Dict = Depends(lambda r: require_super_admin(r))
+    admin: Dict = Depends(get_super_admin)
 ):
     """Delete a user account permanently (super admin only)"""
     
