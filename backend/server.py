@@ -274,14 +274,27 @@ async def create_session(session_data: SessionCreate, response: Response):
     
     if existing_user:
         user_id = existing_user["user_id"]
-        # Update user data
+        # Check if suspended
+        if existing_user.get("is_suspended", False):
+            raise HTTPException(status_code=403, detail=f"Account suspended: {existing_user.get('suspended_reason', 'Contact support')}")
+        
+        # Update user data and last_login
         await db.users.update_one(
             {"user_id": user_id},
-            {"$set": {"name": user_data["name"], "picture": user_data.get("picture")}}
+            {"$set": {
+                "name": user_data["name"], 
+                "picture": user_data.get("picture"),
+                "last_login": datetime.now(timezone.utc).isoformat()
+            }}
         )
     else:
         # Create new user
         user_id = f"user_{uuid.uuid4().hex[:12]}"
+        
+        # Check if this is the first user (make them super_admin)
+        total_users = await db.users.count_documents({})
+        user_role = "super_admin" if total_users == 0 else "learner"
+        
         new_user = {
             "user_id": user_id,
             "email": user_data["email"],
@@ -289,9 +302,17 @@ async def create_session(session_data: SessionCreate, response: Response):
             "picture": user_data.get("picture"),
             "subscription_status": "free",
             "subscription_expires_at": None,
+            "role": user_role,
+            "is_suspended": False,
+            "suspended_reason": None,
+            "suspended_at": None,
+            "last_login": datetime.now(timezone.utc).isoformat(),
             "created_at": datetime.now(timezone.utc).isoformat()
         }
         await db.users.insert_one(new_user)
+        
+        if user_role == "super_admin":
+            logger.info(f"First user created as super_admin: {user_data['email']}")
     
     # Create session
     session_token = f"sess_{uuid.uuid4().hex}"
