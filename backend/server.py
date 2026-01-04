@@ -3311,9 +3311,8 @@ async def delete_user(
 
 @api_router.get("/admin/analytics/overview")
 async def get_admin_analytics(
-    request: Request,
     days: int = 30,
-    admin: Dict = Depends(lambda r: require_admin(r))
+    admin: Dict = Depends(get_admin)
 ):
     """Get platform analytics for the specified time period"""
     
