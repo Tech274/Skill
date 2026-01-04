@@ -50,6 +50,11 @@ class UserBase(BaseModel):
     picture: Optional[str] = None
     subscription_status: str = "free"
     subscription_expires_at: Optional[datetime] = None
+    role: str = "learner"  # learner, super_admin, content_admin, lab_admin, finance_admin, support_admin
+    is_suspended: bool = False
+    suspended_reason: Optional[str] = None
+    suspended_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class SessionCreate(BaseModel):
