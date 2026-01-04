@@ -264,6 +264,7 @@ export default function AdminUsers() {
                             }}
                             className="text-blue-600 hover:text-blue-900"
                             title="Change Role"
+                            data-testid={`change-role-btn-${user.user_id}`}
                           >
                             <Shield className="h-4 w-4" />
                           </button>
@@ -272,6 +273,7 @@ export default function AdminUsers() {
                               onClick={() => handleRestore(user.user_id)}
                               className="text-green-600 hover:text-green-900"
                               title="Restore User"
+                              data-testid={`restore-user-btn-${user.user_id}`}
                             >
                               <CheckCircle className="h-4 w-4" />
                             </button>
@@ -283,6 +285,7 @@ export default function AdminUsers() {
                               }}
                               className="text-orange-600 hover:text-orange-900"
                               title="Suspend User"
+                              data-testid={`suspend-user-btn-${user.user_id}`}
                             >
                               <Ban className="h-4 w-4" />
                             </button>
@@ -291,6 +294,7 @@ export default function AdminUsers() {
                             onClick={() => handleDelete(user.user_id)}
                             className="text-red-600 hover:text-red-900"
                             title="Delete User"
+                            data-testid={`delete-user-btn-${user.user_id}`}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
