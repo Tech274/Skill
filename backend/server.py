@@ -4552,6 +4552,658 @@ async def admin_get_metrics(period: str = "24h", admin: Dict = Depends(get_admin
     }
 
 
+# ============== EXAM & CERTIFICATION ADMIN ROUTES ==============
+
+# Pydantic Models for Exam Admin
+class QuestionCreate(BaseModel):
+    """Model for creating/updating a question in the question bank"""
+    model_config = ConfigDict(extra="ignore")
+    question_id: str = Field(default_factory=lambda: f"q_{uuid.uuid4().hex[:12]}")
+    cert_id: str
+    domain: str
+    topic: str
+    question_text: str
+    question_type: str = "multiple_choice"  # multiple_choice, true_false, multi_select
+    options: List[str] = []
+    correct_answer: str = ""  # For multiple_choice/true_false
+    correct_answers: List[str] = []  # For multi_select
+    explanation: str = ""
+    difficulty: str = "intermediate"  # easy, intermediate, hard
+    tags: List[str] = []
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ExamCreate(BaseModel):
+    """Model for creating/updating an exam"""
+    model_config = ConfigDict(extra="ignore")
+    exam_id: str = Field(default_factory=lambda: f"exam_{uuid.uuid4().hex[:12]}")
+    cert_id: str
+    title: str
+    description: str
+    exam_type: str = "practice"  # practice, mock, final
+    duration_minutes: int = 90
+    pass_percentage: int = 70
+    total_questions: int = 50
+    question_selection: str = "random"  # random, fixed, weighted
+    question_ids: List[str] = []  # For fixed selection
+    domain_weights: Dict[str, int] = {}  # For weighted selection {domain: percentage}
+    is_timed: bool = True
+    show_answers_after: bool = True
+    max_attempts: int = 0  # 0 = unlimited
+    is_published: bool = False
+    order: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class CertificateTemplateCreate(BaseModel):
+    """Model for certificate templates"""
+    model_config = ConfigDict(extra="ignore")
+    template_id: str = Field(default_factory=lambda: f"tmpl_{uuid.uuid4().hex[:12]}")
+    cert_id: str
+    name: str
+    description: str = ""
+    background_color: str = "#ffffff"
+    accent_color: str = "#1e40af"
+    logo_url: str = ""
+    signature_url: str = ""
+    signatory_name: str = "Platform Director"
+    signatory_title: str = "SkillTrack365"
+    include_badge: bool = True
+    include_qr: bool = True
+    custom_text: str = ""
+    is_default: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class ExamAttemptCreate(BaseModel):
+    """Model for exam attempts"""
+    model_config = ConfigDict(extra="ignore")
+    attempt_id: str = Field(default_factory=lambda: f"att_{uuid.uuid4().hex[:12]}")
+    exam_id: str
+    user_id: str
+    cert_id: str
+    questions: List[Dict] = []  # Selected questions for this attempt
+    answers: Dict[str, str] = {}
+    score: int = 0
+    passed: bool = False
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+    time_spent_seconds: int = 0
+    status: str = "in_progress"  # in_progress, completed, abandoned
+
+
+# === Admin Question Bank Routes ===
+
+@api_router.get("/admin/question-bank/stats")
+async def admin_get_question_bank_stats(admin: Dict = Depends(get_admin)):
+    """Get question bank statistics"""
+    total_questions = await db.question_bank.count_documents({})
+    active_questions = await db.question_bank.count_documents({"is_active": True})
+    
+    # Questions by certification
+    certs = await db.certifications.find({}, {"_id": 0, "cert_id": 1, "name": 1, "vendor": 1}).to_list(100)
+    questions_by_cert = {}
+    for cert in certs:
+        count = await db.question_bank.count_documents({"cert_id": cert["cert_id"]})
+        questions_by_cert[cert["cert_id"]] = {
+            "name": f"{cert.get('vendor', '')} {cert.get('name', '')}",
+            "count": count
+        }
+    
+    # Questions by difficulty
+    easy = await db.question_bank.count_documents({"difficulty": "easy"})
+    intermediate = await db.question_bank.count_documents({"difficulty": "intermediate"})
+    hard = await db.question_bank.count_documents({"difficulty": "hard"})
+    
+    return {
+        "total_questions": total_questions,
+        "active_questions": active_questions,
+        "inactive_questions": total_questions - active_questions,
+        "questions_by_cert": questions_by_cert,
+        "questions_by_difficulty": {
+            "easy": easy,
+            "intermediate": intermediate,
+            "hard": hard
+        }
+    }
+
+@api_router.get("/admin/question-bank")
+async def admin_get_questions(
+    cert_id: Optional[str] = None,
+    domain: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get questions from the question bank with filters"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    if domain:
+        query["domain"] = domain
+    if difficulty:
+        query["difficulty"] = difficulty
+    if is_active is not None:
+        query["is_active"] = is_active
+    if search:
+        query["$or"] = [
+            {"question_text": {"$regex": search, "$options": "i"}},
+            {"topic": {"$regex": search, "$options": "i"}},
+            {"tags": {"$in": [search]}}
+        ]
+    
+    total = await db.question_bank.count_documents(query)
+    questions = await db.question_bank.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    return {
+        "questions": questions,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/question-bank/{question_id}")
+async def admin_get_question(question_id: str, admin: Dict = Depends(get_admin)):
+    """Get a single question"""
+    question = await db.question_bank.find_one({"question_id": question_id}, {"_id": 0})
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return question
+
+@api_router.post("/admin/question-bank")
+async def admin_create_question(question: QuestionCreate, admin: Dict = Depends(get_admin)):
+    """Create a new question"""
+    # Verify certification exists
+    cert = await db.certifications.find_one({"cert_id": question.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    question_dict = question.model_dump()
+    question_dict["created_at"] = datetime.now(timezone.utc).isoformat()
+    question_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+    question_dict["created_by"] = admin["user_id"]
+    
+    await db.question_bank.insert_one(question_dict)
+    
+    logger.info(f"Admin {admin['email']} created question {question.question_id}")
+    return {"message": "Question created", "question_id": question.question_id}
+
+@api_router.put("/admin/question-bank/{question_id}")
+async def admin_update_question(question_id: str, updates: Dict, admin: Dict = Depends(get_admin)):
+    """Update a question"""
+    existing = await db.question_bank.find_one({"question_id": question_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    # Don't allow updating question_id
+    updates.pop("question_id", None)
+    updates.pop("_id", None)
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updates["updated_by"] = admin["user_id"]
+    
+    await db.question_bank.update_one(
+        {"question_id": question_id},
+        {"$set": updates}
+    )
+    
+    logger.info(f"Admin {admin['email']} updated question {question_id}")
+    return {"message": "Question updated"}
+
+@api_router.delete("/admin/question-bank/{question_id}")
+async def admin_delete_question(question_id: str, admin: Dict = Depends(get_super_admin)):
+    """Delete a question (super_admin only)"""
+    result = await db.question_bank.delete_one({"question_id": question_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Question not found")
+    
+    logger.info(f"Super admin {admin['email']} deleted question {question_id}")
+    return {"message": "Question deleted"}
+
+@api_router.post("/admin/question-bank/bulk-import")
+async def admin_bulk_import_questions(questions: List[QuestionCreate], admin: Dict = Depends(get_admin)):
+    """Bulk import questions"""
+    imported = 0
+    errors = []
+    
+    for i, question in enumerate(questions):
+        try:
+            question_dict = question.model_dump()
+            question_dict["created_at"] = datetime.now(timezone.utc).isoformat()
+            question_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+            question_dict["created_by"] = admin["user_id"]
+            await db.question_bank.insert_one(question_dict)
+            imported += 1
+        except Exception as e:
+            errors.append({"index": i, "error": str(e)})
+    
+    logger.info(f"Admin {admin['email']} bulk imported {imported} questions")
+    return {
+        "message": f"Imported {imported} questions",
+        "imported": imported,
+        "errors": errors
+    }
+
+
+# === Admin Exam Management Routes ===
+
+@api_router.get("/admin/exams/stats")
+async def admin_get_exam_stats(admin: Dict = Depends(get_admin)):
+    """Get exam statistics"""
+    total_exams = await db.admin_exams.count_documents({})
+    published_exams = await db.admin_exams.count_documents({"is_published": True})
+    
+    # Exams by type
+    practice_count = await db.admin_exams.count_documents({"exam_type": "practice"})
+    mock_count = await db.admin_exams.count_documents({"exam_type": "mock"})
+    final_count = await db.admin_exams.count_documents({"exam_type": "final"})
+    
+    # Total attempts
+    total_attempts = await db.exam_attempts.count_documents({})
+    completed_attempts = await db.exam_attempts.count_documents({"status": "completed"})
+    passed_attempts = await db.exam_attempts.count_documents({"passed": True})
+    
+    # Average pass rate
+    pass_rate = round((passed_attempts / completed_attempts * 100), 1) if completed_attempts > 0 else 0
+    
+    return {
+        "total_exams": total_exams,
+        "published_exams": published_exams,
+        "draft_exams": total_exams - published_exams,
+        "exams_by_type": {
+            "practice": practice_count,
+            "mock": mock_count,
+            "final": final_count
+        },
+        "attempts": {
+            "total": total_attempts,
+            "completed": completed_attempts,
+            "passed": passed_attempts,
+            "pass_rate": pass_rate
+        }
+    }
+
+@api_router.get("/admin/exams")
+async def admin_get_exams(
+    cert_id: Optional[str] = None,
+    exam_type: Optional[str] = None,
+    is_published: Optional[bool] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all exams with filters"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    if exam_type:
+        query["exam_type"] = exam_type
+    if is_published is not None:
+        query["is_published"] = is_published
+    
+    exams = await db.admin_exams.find(query, {"_id": 0}).sort("order", 1).to_list(100)
+    
+    # Enrich with attempt counts
+    for exam in exams:
+        attempt_count = await db.exam_attempts.count_documents({"exam_id": exam["exam_id"]})
+        passed_count = await db.exam_attempts.count_documents({"exam_id": exam["exam_id"], "passed": True})
+        exam["attempt_count"] = attempt_count
+        exam["pass_count"] = passed_count
+    
+    return exams
+
+@api_router.get("/admin/exams/{exam_id}")
+async def admin_get_exam(exam_id: str, admin: Dict = Depends(get_admin)):
+    """Get a single exam with full details"""
+    exam = await db.admin_exams.find_one({"exam_id": exam_id}, {"_id": 0})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    # Get question details if fixed selection
+    if exam.get("question_selection") == "fixed" and exam.get("question_ids"):
+        questions = await db.question_bank.find(
+            {"question_id": {"$in": exam["question_ids"]}},
+            {"_id": 0}
+        ).to_list(500)
+        exam["questions"] = questions
+    
+    return exam
+
+@api_router.post("/admin/exams")
+async def admin_create_exam(exam: ExamCreate, admin: Dict = Depends(get_admin)):
+    """Create a new exam"""
+    # Verify certification exists
+    cert = await db.certifications.find_one({"cert_id": exam.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    exam_dict = exam.model_dump()
+    exam_dict["created_at"] = datetime.now(timezone.utc).isoformat()
+    exam_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+    exam_dict["created_by"] = admin["user_id"]
+    
+    await db.admin_exams.insert_one(exam_dict)
+    
+    logger.info(f"Admin {admin['email']} created exam {exam.exam_id}")
+    return {"message": "Exam created", "exam_id": exam.exam_id}
+
+@api_router.put("/admin/exams/{exam_id}")
+async def admin_update_exam(exam_id: str, updates: Dict, admin: Dict = Depends(get_admin)):
+    """Update an exam"""
+    existing = await db.admin_exams.find_one({"exam_id": exam_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    updates.pop("exam_id", None)
+    updates.pop("_id", None)
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updates["updated_by"] = admin["user_id"]
+    
+    await db.admin_exams.update_one(
+        {"exam_id": exam_id},
+        {"$set": updates}
+    )
+    
+    logger.info(f"Admin {admin['email']} updated exam {exam_id}")
+    return {"message": "Exam updated"}
+
+@api_router.delete("/admin/exams/{exam_id}")
+async def admin_delete_exam(exam_id: str, admin: Dict = Depends(get_super_admin)):
+    """Delete an exam (super_admin only)"""
+    result = await db.admin_exams.delete_one({"exam_id": exam_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    logger.info(f"Super admin {admin['email']} deleted exam {exam_id}")
+    return {"message": "Exam deleted"}
+
+@api_router.post("/admin/exams/{exam_id}/add-questions")
+async def admin_add_questions_to_exam(exam_id: str, question_ids: List[str], admin: Dict = Depends(get_admin)):
+    """Add questions to an exam (for fixed selection)"""
+    exam = await db.admin_exams.find_one({"exam_id": exam_id})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    # Verify questions exist
+    for qid in question_ids:
+        q = await db.question_bank.find_one({"question_id": qid})
+        if not q:
+            raise HTTPException(status_code=404, detail=f"Question {qid} not found")
+    
+    current_ids = exam.get("question_ids", [])
+    new_ids = list(set(current_ids + question_ids))
+    
+    await db.admin_exams.update_one(
+        {"exam_id": exam_id},
+        {"$set": {
+            "question_ids": new_ids,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    return {"message": f"Added {len(question_ids)} questions", "total_questions": len(new_ids)}
+
+@api_router.post("/admin/exams/{exam_id}/remove-questions")
+async def admin_remove_questions_from_exam(exam_id: str, question_ids: List[str], admin: Dict = Depends(get_admin)):
+    """Remove questions from an exam"""
+    exam = await db.admin_exams.find_one({"exam_id": exam_id})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    current_ids = exam.get("question_ids", [])
+    new_ids = [qid for qid in current_ids if qid not in question_ids]
+    
+    await db.admin_exams.update_one(
+        {"exam_id": exam_id},
+        {"$set": {
+            "question_ids": new_ids,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    
+    return {"message": f"Removed {len(question_ids)} questions", "total_questions": len(new_ids)}
+
+
+# === Admin Certificate Template Routes ===
+
+@api_router.get("/admin/certificate-templates")
+async def admin_get_certificate_templates(cert_id: Optional[str] = None, admin: Dict = Depends(get_admin)):
+    """Get all certificate templates"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    
+    templates = await db.certificate_templates.find(query, {"_id": 0}).to_list(100)
+    return templates
+
+@api_router.get("/admin/certificate-templates/{template_id}")
+async def admin_get_certificate_template(template_id: str, admin: Dict = Depends(get_admin)):
+    """Get a single certificate template"""
+    template = await db.certificate_templates.find_one({"template_id": template_id}, {"_id": 0})
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+@api_router.post("/admin/certificate-templates")
+async def admin_create_certificate_template(template: CertificateTemplateCreate, admin: Dict = Depends(get_admin)):
+    """Create a new certificate template"""
+    # Verify certification exists
+    cert = await db.certifications.find_one({"cert_id": template.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    # If this is set as default, unset other defaults for this cert
+    if template.is_default:
+        await db.certificate_templates.update_many(
+            {"cert_id": template.cert_id},
+            {"$set": {"is_default": False}}
+        )
+    
+    template_dict = template.model_dump()
+    template_dict["created_at"] = datetime.now(timezone.utc).isoformat()
+    template_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+    template_dict["created_by"] = admin["user_id"]
+    
+    await db.certificate_templates.insert_one(template_dict)
+    
+    logger.info(f"Admin {admin['email']} created certificate template {template.template_id}")
+    return {"message": "Template created", "template_id": template.template_id}
+
+@api_router.put("/admin/certificate-templates/{template_id}")
+async def admin_update_certificate_template(template_id: str, updates: Dict, admin: Dict = Depends(get_admin)):
+    """Update a certificate template"""
+    existing = await db.certificate_templates.find_one({"template_id": template_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    # If setting as default, unset other defaults
+    if updates.get("is_default"):
+        await db.certificate_templates.update_many(
+            {"cert_id": existing["cert_id"], "template_id": {"$ne": template_id}},
+            {"$set": {"is_default": False}}
+        )
+    
+    updates.pop("template_id", None)
+    updates.pop("_id", None)
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updates["updated_by"] = admin["user_id"]
+    
+    await db.certificate_templates.update_one(
+        {"template_id": template_id},
+        {"$set": updates}
+    )
+    
+    logger.info(f"Admin {admin['email']} updated template {template_id}")
+    return {"message": "Template updated"}
+
+@api_router.delete("/admin/certificate-templates/{template_id}")
+async def admin_delete_certificate_template(template_id: str, admin: Dict = Depends(get_super_admin)):
+    """Delete a certificate template (super_admin only)"""
+    result = await db.certificate_templates.delete_one({"template_id": template_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    
+    logger.info(f"Super admin {admin['email']} deleted template {template_id}")
+    return {"message": "Template deleted"}
+
+
+# === Admin Issued Certificates Routes ===
+
+@api_router.get("/admin/issued-certificates")
+async def admin_get_issued_certificates(
+    cert_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get all issued certificates with filters"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    if user_id:
+        query["user_id"] = user_id
+    
+    total = await db.certificates.count_documents(query)
+    certificates = await db.certificates.find(query, {"_id": 0}).sort("issued_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Enrich with user info
+    for cert in certificates:
+        user = await db.users.find_one({"user_id": cert.get("user_id")}, {"_id": 0, "name": 1, "email": 1})
+        cert["user"] = user
+    
+    return {
+        "certificates": certificates,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.post("/admin/issued-certificates/{certificate_id}/revoke")
+async def admin_revoke_certificate(certificate_id: str, reason: str = "Administrative action", admin: Dict = Depends(get_super_admin)):
+    """Revoke an issued certificate (super_admin only)"""
+    existing = await db.certificates.find_one({"certificate_id": certificate_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    
+    await db.certificates.update_one(
+        {"certificate_id": certificate_id},
+        {"$set": {
+            "is_revoked": True,
+            "revoked_at": datetime.now(timezone.utc).isoformat(),
+            "revoked_by": admin["user_id"],
+            "revoke_reason": reason
+        }}
+    )
+    
+    logger.info(f"Super admin {admin['email']} revoked certificate {certificate_id}")
+    return {"message": "Certificate revoked"}
+
+
+# === Admin Exam Attempts/Analytics Routes ===
+
+@api_router.get("/admin/exam-attempts")
+async def admin_get_exam_attempts(
+    exam_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: Dict = Depends(get_admin)
+):
+    """Get exam attempts with filters"""
+    query = {}
+    if exam_id:
+        query["exam_id"] = exam_id
+    if user_id:
+        query["user_id"] = user_id
+    if status:
+        query["status"] = status
+    
+    total = await db.exam_attempts.count_documents(query)
+    attempts = await db.exam_attempts.find(query, {"_id": 0}).sort("started_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    # Enrich with user and exam info
+    for attempt in attempts:
+        user = await db.users.find_one({"user_id": attempt.get("user_id")}, {"_id": 0, "name": 1, "email": 1})
+        exam = await db.admin_exams.find_one({"exam_id": attempt.get("exam_id")}, {"_id": 0, "title": 1})
+        attempt["user"] = user
+        attempt["exam"] = exam
+    
+    return {
+        "attempts": attempts,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@api_router.get("/admin/exams/{exam_id}/analytics")
+async def admin_get_exam_analytics(exam_id: str, admin: Dict = Depends(get_admin)):
+    """Get detailed analytics for an exam"""
+    exam = await db.admin_exams.find_one({"exam_id": exam_id})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    
+    attempts = await db.exam_attempts.find({"exam_id": exam_id, "status": "completed"}, {"_id": 0}).to_list(10000)
+    
+    if not attempts:
+        return {
+            "exam_id": exam_id,
+            "total_attempts": 0,
+            "pass_rate": 0,
+            "avg_score": 0,
+            "avg_time_minutes": 0,
+            "score_distribution": {},
+            "question_analytics": []
+        }
+    
+    # Calculate stats
+    scores = [a.get("score", 0) for a in attempts]
+    times = [a.get("time_spent_seconds", 0) / 60 for a in attempts]
+    passed = len([a for a in attempts if a.get("passed")])
+    
+    # Score distribution
+    score_ranges = {"0-50": 0, "51-60": 0, "61-70": 0, "71-80": 0, "81-90": 0, "91-100": 0}
+    for score in scores:
+        if score <= 50:
+            score_ranges["0-50"] += 1
+        elif score <= 60:
+            score_ranges["51-60"] += 1
+        elif score <= 70:
+            score_ranges["61-70"] += 1
+        elif score <= 80:
+            score_ranges["71-80"] += 1
+        elif score <= 90:
+            score_ranges["81-90"] += 1
+        else:
+            score_ranges["91-100"] += 1
+    
+    return {
+        "exam_id": exam_id,
+        "total_attempts": len(attempts),
+        "pass_rate": round(passed / len(attempts) * 100, 1),
+        "avg_score": round(sum(scores) / len(scores), 1),
+        "avg_time_minutes": round(sum(times) / len(times), 1),
+        "min_score": min(scores),
+        "max_score": max(scores),
+        "score_distribution": score_ranges
+    }
+
+
+# === Get domains for a certification (helper for question bank) ===
+
+@api_router.get("/admin/certifications/{cert_id}/domains")
+async def admin_get_cert_domains(cert_id: str, admin: Dict = Depends(get_admin)):
+    """Get exam domains for a certification"""
+    cert = await db.certifications.find_one({"cert_id": cert_id}, {"_id": 0})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    domains = cert.get("exam_domains", [])
+    return {"cert_id": cert_id, "domains": domains}
+
+
 @api_router.get("/")
 async def root():
     return {"message": "SkillTrack365 API", "version": "1.0.0"}
