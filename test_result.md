@@ -107,7 +107,10 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Navigation & Catalog Pages"
+    - "Admin Foundation - Role-Based Access Control"
+    - "Admin Dashboard API"
+    - "Admin User Management API"
+    - "Admin Analytics API"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
