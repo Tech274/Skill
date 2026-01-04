@@ -36,6 +36,7 @@ import Badges from "./pages/Badges";
 import AdminLayout from "./components/AdminLayout";
 import AdminDashboard from "./pages/Admin/AdminDashboard";
 import AdminUsers from "./pages/Admin/AdminUsers";
+import AdminContent from "./pages/Admin/AdminContent";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -232,6 +233,7 @@ const AppRouter = () => {
       <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
         <Route index element={<AdminDashboard />} />
         <Route path="users" element={<AdminUsers />} />
+        <Route path="content" element={<AdminContent />} />
       </Route>
     </Routes>
   );
