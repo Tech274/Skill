@@ -168,7 +168,9 @@ class TestPublicEndpoints:
         response = requests.get(f"{BASE_URL}/api/catalog/labs")
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         data = response.json()
-        assert isinstance(data, list), "Expected list of labs"
+        # Catalog returns object with labs key
+        assert "labs" in data, "Expected 'labs' key in response"
+        assert isinstance(data["labs"], list), "Expected labs to be a list"
 
 
 class TestInvalidInputs:
