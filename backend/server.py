@@ -3407,6 +3407,566 @@ async def get_user_activity(
         "transactions": transactions
     }
 
+# ============== ADMIN CONTENT MANAGEMENT ==============
+
+# Pydantic models for admin content operations
+class AdminCertificationCreate(BaseModel):
+    vendor: str
+    name: str
+    code: str
+    difficulty: str
+    description: str
+    job_roles: List[str] = []
+    exam_domains: List[Dict[str, Any]] = []
+    image_url: Optional[str] = None
+    order: int = 0
+    category: Optional[str] = None
+    is_published: bool = True
+
+class AdminLabCreate(BaseModel):
+    cert_id: str
+    title: str
+    description: str
+    skill_trained: str
+    exam_domain: str
+    duration_minutes: int
+    difficulty: str
+    instructions: List[Dict[str, Any]] = []
+    prerequisites: List[str] = []
+    order: int = 0
+    is_published: bool = True
+
+class AdminAssessmentCreate(BaseModel):
+    cert_id: str
+    title: str
+    description: str
+    type: str  # domain, full_exam
+    topics: List[str] = []
+    time_minutes: int
+    pass_threshold: int
+    questions: List[Dict[str, Any]] = []
+    order: int = 0
+    is_published: bool = True
+
+class AdminProjectCreate(BaseModel):
+    cert_id: str
+    title: str
+    description: str
+    business_scenario: str
+    technologies: List[str] = []
+    difficulty: str
+    skills_validated: List[str] = []
+    tasks: List[Dict[str, Any]] = []
+    deliverables: List[str] = []
+    order: int = 0
+    is_published: bool = True
+
+class ContentReorderRequest(BaseModel):
+    items: List[Dict[str, Any]]  # [{"id": "...", "order": 0}, ...]
+
+
+# Admin Content Stats
+@api_router.get("/admin/content/stats")
+async def get_admin_content_stats(admin: Dict = Depends(get_admin)):
+    """Get content statistics for admin dashboard"""
+    
+    # Count all content
+    certs_count = await db.certifications.count_documents({})
+    labs_count = await db.labs.count_documents({})
+    assessments_count = await db.assessments.count_documents({})
+    projects_count = await db.projects.count_documents({})
+    videos_count = await db.videos.count_documents({})
+    
+    # Get content by vendor/category
+    certs_by_vendor = {}
+    certs = await db.certifications.find({}, {"_id": 0, "vendor": 1}).to_list(100)
+    for cert in certs:
+        vendor = cert.get("vendor", "Other")
+        certs_by_vendor[vendor] = certs_by_vendor.get(vendor, 0) + 1
+    
+    # Get content usage stats
+    total_lab_completions = await db.user_progress.aggregate([
+        {"$project": {"labs_count": {"$size": {"$ifNull": ["$labs_completed", []]}}}},
+        {"$group": {"_id": None, "total": {"$sum": "$labs_count"}}}
+    ]).to_list(1)
+    
+    total_assessment_completions = await db.user_progress.aggregate([
+        {"$project": {"assess_count": {"$size": {"$ifNull": ["$assessments_completed", []]}}}},
+        {"$group": {"_id": None, "total": {"$sum": "$assess_count"}}}
+    ]).to_list(1)
+    
+    total_project_completions = await db.user_progress.aggregate([
+        {"$project": {"proj_count": {"$size": {"$ifNull": ["$projects_completed", []]}}}},
+        {"$group": {"_id": None, "total": {"$sum": "$proj_count"}}}
+    ]).to_list(1)
+    
+    return {
+        "counts": {
+            "certifications": certs_count,
+            "labs": labs_count,
+            "assessments": assessments_count,
+            "projects": projects_count,
+            "videos": videos_count
+        },
+        "by_vendor": certs_by_vendor,
+        "usage": {
+            "lab_completions": total_lab_completions[0]["total"] if total_lab_completions else 0,
+            "assessment_completions": total_assessment_completions[0]["total"] if total_assessment_completions else 0,
+            "project_completions": total_project_completions[0]["total"] if total_project_completions else 0
+        }
+    }
+
+
+# ===== CERTIFICATION CRUD =====
+
+@api_router.get("/admin/certifications")
+async def admin_list_certifications(admin: Dict = Depends(get_admin)):
+    """List all certifications with full details for admin"""
+    certs = await db.certifications.find({}, {"_id": 0}).to_list(100)
+    
+    # Add related content counts
+    for cert in certs:
+        cert["actual_labs_count"] = await db.labs.count_documents({"cert_id": cert["cert_id"]})
+        cert["actual_assessments_count"] = await db.assessments.count_documents({"cert_id": cert["cert_id"]})
+        cert["actual_projects_count"] = await db.projects.count_documents({"cert_id": cert["cert_id"]})
+        cert["actual_videos_count"] = await db.videos.count_documents({"cert_id": cert["cert_id"]})
+    
+    return certs
+
+@api_router.post("/admin/certifications")
+async def admin_create_certification(data: AdminCertificationCreate, admin: Dict = Depends(get_admin)):
+    """Create a new certification"""
+    cert_id = f"cert-{uuid.uuid4().hex[:8]}"
+    
+    certification = {
+        "cert_id": cert_id,
+        "vendor": data.vendor,
+        "name": data.name,
+        "code": data.code,
+        "difficulty": data.difficulty,
+        "description": data.description,
+        "job_roles": data.job_roles,
+        "exam_domains": data.exam_domains,
+        "labs_count": 0,
+        "assessments_count": 0,
+        "projects_count": 0,
+        "image_url": data.image_url,
+        "order": data.order,
+        "category": data.category,
+        "is_published": data.is_published,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["user_id"]
+    }
+    
+    await db.certifications.insert_one(certification)
+    logger.info(f"Admin {admin['email']} created certification: {data.name}")
+    
+    return {"cert_id": cert_id, "message": "Certification created successfully"}
+
+@api_router.put("/admin/certifications/{cert_id}")
+async def admin_update_certification(cert_id: str, data: AdminCertificationCreate, admin: Dict = Depends(get_admin)):
+    """Update an existing certification"""
+    existing = await db.certifications.find_one({"cert_id": cert_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    update_data = {
+        "vendor": data.vendor,
+        "name": data.name,
+        "code": data.code,
+        "difficulty": data.difficulty,
+        "description": data.description,
+        "job_roles": data.job_roles,
+        "exam_domains": data.exam_domains,
+        "image_url": data.image_url,
+        "order": data.order,
+        "category": data.category,
+        "is_published": data.is_published,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": admin["user_id"]
+    }
+    
+    await db.certifications.update_one({"cert_id": cert_id}, {"$set": update_data})
+    logger.info(f"Admin {admin['email']} updated certification: {cert_id}")
+    
+    return {"message": "Certification updated successfully"}
+
+@api_router.delete("/admin/certifications/{cert_id}")
+async def admin_delete_certification(cert_id: str, admin: Dict = Depends(get_admin)):
+    """Delete a certification and optionally its related content"""
+    existing = await db.certifications.find_one({"cert_id": cert_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    # Delete related content
+    await db.labs.delete_many({"cert_id": cert_id})
+    await db.assessments.delete_many({"cert_id": cert_id})
+    await db.projects.delete_many({"cert_id": cert_id})
+    await db.videos.delete_many({"cert_id": cert_id})
+    await db.discussions.delete_many({"cert_id": cert_id})
+    
+    # Delete certification
+    await db.certifications.delete_one({"cert_id": cert_id})
+    
+    logger.warning(f"Admin {admin['email']} DELETED certification: {cert_id} and all related content")
+    
+    return {"message": "Certification and related content deleted successfully"}
+
+
+# ===== LAB CRUD =====
+
+@api_router.get("/admin/labs")
+async def admin_list_labs(
+    cert_id: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """List all labs, optionally filtered by certification"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    
+    labs = await db.labs.find(query, {"_id": 0}).to_list(500)
+    return labs
+
+@api_router.post("/admin/labs")
+async def admin_create_lab(data: AdminLabCreate, admin: Dict = Depends(get_admin)):
+    """Create a new lab"""
+    # Verify certification exists
+    cert = await db.certifications.find_one({"cert_id": data.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    lab_id = f"lab-{uuid.uuid4().hex[:8]}"
+    
+    lab = {
+        "lab_id": lab_id,
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "skill_trained": data.skill_trained,
+        "exam_domain": data.exam_domain,
+        "duration_minutes": data.duration_minutes,
+        "difficulty": data.difficulty,
+        "instructions": data.instructions,
+        "prerequisites": data.prerequisites,
+        "order": data.order,
+        "is_published": data.is_published,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["user_id"]
+    }
+    
+    await db.labs.insert_one(lab)
+    
+    # Update certification lab count
+    await db.certifications.update_one(
+        {"cert_id": data.cert_id},
+        {"$inc": {"labs_count": 1}}
+    )
+    
+    logger.info(f"Admin {admin['email']} created lab: {data.title}")
+    
+    return {"lab_id": lab_id, "message": "Lab created successfully"}
+
+@api_router.put("/admin/labs/{lab_id}")
+async def admin_update_lab(lab_id: str, data: AdminLabCreate, admin: Dict = Depends(get_admin)):
+    """Update an existing lab"""
+    existing = await db.labs.find_one({"lab_id": lab_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Lab not found")
+    
+    # If cert_id changed, update counts
+    old_cert_id = existing.get("cert_id")
+    if old_cert_id != data.cert_id:
+        await db.certifications.update_one({"cert_id": old_cert_id}, {"$inc": {"labs_count": -1}})
+        await db.certifications.update_one({"cert_id": data.cert_id}, {"$inc": {"labs_count": 1}})
+    
+    update_data = {
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "skill_trained": data.skill_trained,
+        "exam_domain": data.exam_domain,
+        "duration_minutes": data.duration_minutes,
+        "difficulty": data.difficulty,
+        "instructions": data.instructions,
+        "prerequisites": data.prerequisites,
+        "order": data.order,
+        "is_published": data.is_published,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": admin["user_id"]
+    }
+    
+    await db.labs.update_one({"lab_id": lab_id}, {"$set": update_data})
+    logger.info(f"Admin {admin['email']} updated lab: {lab_id}")
+    
+    return {"message": "Lab updated successfully"}
+
+@api_router.delete("/admin/labs/{lab_id}")
+async def admin_delete_lab(lab_id: str, admin: Dict = Depends(get_admin)):
+    """Delete a lab"""
+    existing = await db.labs.find_one({"lab_id": lab_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Lab not found")
+    
+    # Update certification lab count
+    await db.certifications.update_one(
+        {"cert_id": existing["cert_id"]},
+        {"$inc": {"labs_count": -1}}
+    )
+    
+    await db.labs.delete_one({"lab_id": lab_id})
+    logger.warning(f"Admin {admin['email']} DELETED lab: {lab_id}")
+    
+    return {"message": "Lab deleted successfully"}
+
+
+# ===== ASSESSMENT CRUD =====
+
+@api_router.get("/admin/assessments")
+async def admin_list_assessments(
+    cert_id: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """List all assessments, optionally filtered by certification"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    
+    assessments = await db.assessments.find(query, {"_id": 0}).to_list(500)
+    return assessments
+
+@api_router.post("/admin/assessments")
+async def admin_create_assessment(data: AdminAssessmentCreate, admin: Dict = Depends(get_admin)):
+    """Create a new assessment"""
+    cert = await db.certifications.find_one({"cert_id": data.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    assessment_id = f"assess-{uuid.uuid4().hex[:8]}"
+    
+    assessment = {
+        "assessment_id": assessment_id,
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "type": data.type,
+        "topics": data.topics,
+        "time_minutes": data.time_minutes,
+        "pass_threshold": data.pass_threshold,
+        "questions": data.questions,
+        "order": data.order,
+        "is_published": data.is_published,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["user_id"]
+    }
+    
+    await db.assessments.insert_one(assessment)
+    
+    await db.certifications.update_one(
+        {"cert_id": data.cert_id},
+        {"$inc": {"assessments_count": 1}}
+    )
+    
+    logger.info(f"Admin {admin['email']} created assessment: {data.title}")
+    
+    return {"assessment_id": assessment_id, "message": "Assessment created successfully"}
+
+@api_router.put("/admin/assessments/{assessment_id}")
+async def admin_update_assessment(assessment_id: str, data: AdminAssessmentCreate, admin: Dict = Depends(get_admin)):
+    """Update an existing assessment"""
+    existing = await db.assessments.find_one({"assessment_id": assessment_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    
+    old_cert_id = existing.get("cert_id")
+    if old_cert_id != data.cert_id:
+        await db.certifications.update_one({"cert_id": old_cert_id}, {"$inc": {"assessments_count": -1}})
+        await db.certifications.update_one({"cert_id": data.cert_id}, {"$inc": {"assessments_count": 1}})
+    
+    update_data = {
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "type": data.type,
+        "topics": data.topics,
+        "time_minutes": data.time_minutes,
+        "pass_threshold": data.pass_threshold,
+        "questions": data.questions,
+        "order": data.order,
+        "is_published": data.is_published,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": admin["user_id"]
+    }
+    
+    await db.assessments.update_one({"assessment_id": assessment_id}, {"$set": update_data})
+    logger.info(f"Admin {admin['email']} updated assessment: {assessment_id}")
+    
+    return {"message": "Assessment updated successfully"}
+
+@api_router.delete("/admin/assessments/{assessment_id}")
+async def admin_delete_assessment(assessment_id: str, admin: Dict = Depends(get_admin)):
+    """Delete an assessment"""
+    existing = await db.assessments.find_one({"assessment_id": assessment_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    
+    await db.certifications.update_one(
+        {"cert_id": existing["cert_id"]},
+        {"$inc": {"assessments_count": -1}}
+    )
+    
+    await db.assessments.delete_one({"assessment_id": assessment_id})
+    logger.warning(f"Admin {admin['email']} DELETED assessment: {assessment_id}")
+    
+    return {"message": "Assessment deleted successfully"}
+
+
+# ===== PROJECT CRUD =====
+
+@api_router.get("/admin/projects")
+async def admin_list_projects(
+    cert_id: Optional[str] = None,
+    admin: Dict = Depends(get_admin)
+):
+    """List all projects, optionally filtered by certification"""
+    query = {}
+    if cert_id:
+        query["cert_id"] = cert_id
+    
+    projects = await db.projects.find(query, {"_id": 0}).to_list(500)
+    return projects
+
+@api_router.post("/admin/projects")
+async def admin_create_project(data: AdminProjectCreate, admin: Dict = Depends(get_admin)):
+    """Create a new project"""
+    cert = await db.certifications.find_one({"cert_id": data.cert_id})
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    
+    project_id = f"proj-{uuid.uuid4().hex[:8]}"
+    
+    project = {
+        "project_id": project_id,
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "business_scenario": data.business_scenario,
+        "technologies": data.technologies,
+        "difficulty": data.difficulty,
+        "skills_validated": data.skills_validated,
+        "tasks": data.tasks,
+        "deliverables": data.deliverables,
+        "order": data.order,
+        "is_published": data.is_published,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["user_id"]
+    }
+    
+    await db.projects.insert_one(project)
+    
+    await db.certifications.update_one(
+        {"cert_id": data.cert_id},
+        {"$inc": {"projects_count": 1}}
+    )
+    
+    logger.info(f"Admin {admin['email']} created project: {data.title}")
+    
+    return {"project_id": project_id, "message": "Project created successfully"}
+
+@api_router.put("/admin/projects/{project_id}")
+async def admin_update_project(project_id: str, data: AdminProjectCreate, admin: Dict = Depends(get_admin)):
+    """Update an existing project"""
+    existing = await db.projects.find_one({"project_id": project_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    old_cert_id = existing.get("cert_id")
+    if old_cert_id != data.cert_id:
+        await db.certifications.update_one({"cert_id": old_cert_id}, {"$inc": {"projects_count": -1}})
+        await db.certifications.update_one({"cert_id": data.cert_id}, {"$inc": {"projects_count": 1}})
+    
+    update_data = {
+        "cert_id": data.cert_id,
+        "title": data.title,
+        "description": data.description,
+        "business_scenario": data.business_scenario,
+        "technologies": data.technologies,
+        "difficulty": data.difficulty,
+        "skills_validated": data.skills_validated,
+        "tasks": data.tasks,
+        "deliverables": data.deliverables,
+        "order": data.order,
+        "is_published": data.is_published,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": admin["user_id"]
+    }
+    
+    await db.projects.update_one({"project_id": project_id}, {"$set": update_data})
+    logger.info(f"Admin {admin['email']} updated project: {project_id}")
+    
+    return {"message": "Project updated successfully"}
+
+@api_router.delete("/admin/projects/{project_id}")
+async def admin_delete_project(project_id: str, admin: Dict = Depends(get_admin)):
+    """Delete a project"""
+    existing = await db.projects.find_one({"project_id": project_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    await db.certifications.update_one(
+        {"cert_id": existing["cert_id"]},
+        {"$inc": {"projects_count": -1}}
+    )
+    
+    await db.projects.delete_one({"project_id": project_id})
+    logger.warning(f"Admin {admin['email']} DELETED project: {project_id}")
+    
+    return {"message": "Project deleted successfully"}
+
+
+# ===== CONTENT REORDERING =====
+
+@api_router.post("/admin/certifications/reorder")
+async def admin_reorder_certifications(data: ContentReorderRequest, admin: Dict = Depends(get_admin)):
+    """Reorder certifications"""
+    for item in data.items:
+        await db.certifications.update_one(
+            {"cert_id": item["id"]},
+            {"$set": {"order": item["order"]}}
+        )
+    return {"message": "Certifications reordered successfully"}
+
+@api_router.post("/admin/labs/reorder")
+async def admin_reorder_labs(data: ContentReorderRequest, admin: Dict = Depends(get_admin)):
+    """Reorder labs within a certification"""
+    for item in data.items:
+        await db.labs.update_one(
+            {"lab_id": item["id"]},
+            {"$set": {"order": item["order"]}}
+        )
+    return {"message": "Labs reordered successfully"}
+
+@api_router.post("/admin/assessments/reorder")
+async def admin_reorder_assessments(data: ContentReorderRequest, admin: Dict = Depends(get_admin)):
+    """Reorder assessments within a certification"""
+    for item in data.items:
+        await db.assessments.update_one(
+            {"assessment_id": item["id"]},
+            {"$set": {"order": item["order"]}}
+        )
+    return {"message": "Assessments reordered successfully"}
+
+@api_router.post("/admin/projects/reorder")
+async def admin_reorder_projects(data: ContentReorderRequest, admin: Dict = Depends(get_admin)):
+    """Reorder projects within a certification"""
+    for item in data.items:
+        await db.projects.update_one(
+            {"project_id": item["id"]},
+            {"$set": {"order": item["order"]}}
+        )
+    return {"message": "Projects reordered successfully"}
+
+
 @api_router.get("/")
 async def root():
     return {"message": "SkillTrack365 API", "version": "1.0.0"}
