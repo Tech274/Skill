@@ -278,13 +278,9 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 ### Admin Frontend Routes
 - `/admin` - Admin Dashboard (protected)
 - `/admin/users` - User Management (protected)
+- `/admin/content` - Content Management (protected)
 
-### Phase 2: Content & Learning Governance (P1 - Upcoming)
-- [ ] Course/module management
-- [ ] Learning path creation and editing
-- [ ] Content approval workflows
-
-### Phase 3: Lab & Cloud Orchestration (Future)
+### Phase 3: Lab & Cloud Orchestration (P1 - Upcoming)
 - [ ] Lab resource management
 - [ ] Quota management
 - [ ] Resource monitoring
