@@ -118,11 +118,7 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Admin Foundation - Role-Based Access Control"
-    - "Admin Dashboard API"
-    - "Admin User Management API"
-    - "Admin Analytics API"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
