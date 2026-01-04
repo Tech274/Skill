@@ -363,10 +363,49 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - Delete operations require super_admin role for safety
 - Exam attempts track user progress, scores, time spent
 
-### Phase 5: Billing & Subscriptions Admin (Future)
-- [ ] Pricing plan management
-- [ ] Subscription management
-- [ ] Revenue reporting
+### Phase 5: Billing & Subscriptions Admin (January 4, 2026) ✅
+- ✅ **Billing Dashboard** - Revenue overview, subscription counts, transaction stats, revenue trends
+- ✅ **Pricing Plans CRUD** - Full create, read, update, delete for pricing plans
+- ✅ **Plan Features** - Configurable features list, trial days, billing periods (monthly/yearly/one-time)
+- ✅ **Featured Plans** - Mark plans as featured for checkout display
+- ✅ **Team Plans** - Support for max_users limit on team plans
+- ✅ **Seed Default Plans** - One-click seeding of Free, Pro Monthly, Pro Yearly, Team plans
+- ✅ **Subscriptions Management** - View all user subscriptions with search and status filters
+- ✅ **Subscription Detail** - Detailed view with transaction history per user
+- ✅ **Subscription Actions** - Extend subscriptions by days, cancel subscriptions
+- ✅ **Transactions Management** - View all payment transactions with filters
+- ✅ **Refund Processing** - Process refunds with reason tracking (super_admin only)
+- ✅ **Billing Analytics** - Revenue over time, plan performance, conversion rate, ARPU, churn metrics
+- ✅ **Admin Action Logging** - Track subscription changes and refunds in admin_actions collection
+- ✅ **Public Pricing Plans API** - /api/pricing/plans for checkout page display
+
+### Phase 5 API Endpoints
+- `GET /api/admin/billing/dashboard` - Billing dashboard overview stats
+- `GET /api/admin/billing/plans` - List all pricing plans
+- `GET /api/admin/billing/plans/{plan_id}` - Get single plan
+- `POST /api/admin/billing/plans` - Create pricing plan
+- `PUT /api/admin/billing/plans/{plan_id}` - Update plan
+- `DELETE /api/admin/billing/plans/{plan_id}` - Delete plan (super_admin only)
+- `POST /api/admin/billing/seed-plans` - Seed default plans
+- `GET /api/admin/billing/subscriptions` - List subscriptions with filters
+- `GET /api/admin/billing/subscriptions/{user_id}` - Subscription detail with transactions
+- `PUT /api/admin/billing/subscriptions/{user_id}` - Update subscription
+- `POST /api/admin/billing/subscriptions/{user_id}/extend` - Extend subscription
+- `POST /api/admin/billing/subscriptions/{user_id}/cancel` - Cancel subscription
+- `GET /api/admin/billing/transactions` - List all transactions
+- `GET /api/admin/billing/transactions/{transaction_id}` - Transaction detail
+- `POST /api/admin/billing/transactions/{transaction_id}/refund` - Process refund (super_admin only)
+- `GET /api/admin/billing/analytics` - Detailed billing analytics
+- `GET /api/pricing/plans` - Public pricing plans for checkout
+
+### Phase 5 Technical Notes
+- MongoDB Collections: pricing_plans, admin_actions (new), extends payment_transactions
+- Default plans: Free ($0), Pro Monthly ($29.99), Pro Yearly ($199.99, featured), Team ($499.99/year)
+- Billing periods: monthly, yearly, one_time
+- Refund processing updates user subscription to free tier on full refund
+- Admin actions logged with admin_id, action_type, target, details, timestamp
+- Analytics supports daily/weekly/monthly/yearly periods with date range filtering
+- Stripe integration uses sk_test_emergent test key
 
 ### Phase 6: Analytics & Reporting Admin (Future)
 - [ ] User analytics dashboards
