@@ -32,6 +32,11 @@ import DiscussionPost from "./pages/DiscussionPost";
 import Videos from "./pages/Videos";
 import Badges from "./pages/Badges";
 
+// Admin Pages
+import AdminLayout from "./components/AdminLayout";
+import AdminDashboard from "./pages/Admin/AdminDashboard";
+import AdminUsers from "./pages/Admin/AdminUsers";
+
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
