@@ -280,6 +280,7 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - `/admin/users` - User Management (protected)
 - `/admin/content` - Content Management (protected)
 - `/admin/labs` - Lab Orchestration (protected)
+- `/admin/exams` - Exams & Certifications (protected)
 
 ### Phase 3: Lab & Cloud Orchestration (January 4, 2026) ✅
 - ✅ **Lab Instance Management** - Track active lab sessions across all users
@@ -314,10 +315,53 @@ Build a full-scale, Certification-First, Hands-On Learning SaaS platform inspire
 - Cost estimation based on provider-specific hourly rates
 - Collections: lab_instances, resource_quotas, cloud_providers
 
-### Phase 4: Exams & Certifications Admin (Future)
-- [ ] Question bank management
-- [ ] Exam creation and editing
-- [ ] Certificate template management
+### Phase 4: Exams & Certifications Admin (January 4, 2026) ✅
+- ✅ **Question Bank Management** - Full CRUD for exam questions with difficulty, domain, topic tagging
+- ✅ **Question Types** - Multiple choice, true/false, multi-select support
+- ✅ **Exam Management** - Create/edit exams with configurable duration, pass percentage, attempts
+- ✅ **Exam Types** - Practice, mock, and final exam support
+- ✅ **Question Selection** - Random, fixed, or weighted by domain question selection modes
+- ✅ **Certificate Templates** - Custom templates with colors, logos, signatures, QR codes
+- ✅ **Default Templates** - Set default template per certification
+- ✅ **Issued Certificates** - View all issued certificates with filters
+- ✅ **Certificate Revocation** - Super admin can revoke certificates with reason
+- ✅ **Exam Analytics** - View attempt counts, pass rates per exam
+- ✅ **Bulk Import** - Import multiple questions at once
+
+### Phase 4 API Endpoints
+- `GET /api/admin/question-bank/stats` - Question bank statistics
+- `GET /api/admin/question-bank` - List questions with filters (cert_id, domain, difficulty, search)
+- `GET /api/admin/question-bank/{question_id}` - Get single question
+- `POST /api/admin/question-bank` - Create question
+- `PUT /api/admin/question-bank/{question_id}` - Update question
+- `DELETE /api/admin/question-bank/{question_id}` - Delete question (super_admin only)
+- `POST /api/admin/question-bank/bulk-import` - Bulk import questions
+- `GET /api/admin/exams/stats` - Exam statistics
+- `GET /api/admin/exams` - List exams with filters
+- `GET /api/admin/exams/{exam_id}` - Get single exam with questions
+- `POST /api/admin/exams` - Create exam
+- `PUT /api/admin/exams/{exam_id}` - Update exam
+- `DELETE /api/admin/exams/{exam_id}` - Delete exam (super_admin only)
+- `POST /api/admin/exams/{exam_id}/add-questions` - Add questions to exam
+- `POST /api/admin/exams/{exam_id}/remove-questions` - Remove questions from exam
+- `GET /api/admin/exams/{exam_id}/analytics` - Exam analytics
+- `GET /api/admin/certificate-templates` - List templates
+- `GET /api/admin/certificate-templates/{template_id}` - Get single template
+- `POST /api/admin/certificate-templates` - Create template
+- `PUT /api/admin/certificate-templates/{template_id}` - Update template
+- `DELETE /api/admin/certificate-templates/{template_id}` - Delete template (super_admin only)
+- `GET /api/admin/issued-certificates` - List issued certificates
+- `POST /api/admin/issued-certificates/{certificate_id}/revoke` - Revoke certificate (super_admin only)
+- `GET /api/admin/exam-attempts` - List exam attempts with filters
+- `GET /api/admin/certifications/{cert_id}/domains` - Get certification domains
+
+### Phase 4 Technical Notes
+- MongoDB Collections: question_bank, admin_exams, certificate_templates, exam_attempts
+- Question types: multiple_choice, true_false, multi_select
+- Exam selection modes: random (from bank), fixed (specific questions), weighted (by domain percentage)
+- Certificate templates include customizable colors, logos, signatures, QR codes
+- Delete operations require super_admin role for safety
+- Exam attempts track user progress, scores, time spent
 
 ### Phase 5: Billing & Subscriptions Admin (Future)
 - [ ] Pricing plan management
