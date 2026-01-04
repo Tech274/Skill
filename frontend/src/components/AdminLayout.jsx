@@ -37,7 +37,7 @@ export default function AdminLayout() {
     <div className="min-h-screen bg-gray-50">
       <div className="flex">
         {/* Sidebar */}
-        <div className="w-64 min-h-screen bg-gray-900 text-white">
+        <div className="w-64 min-h-screen bg-gray-900 text-white" data-testid="admin-sidebar">
           <div className="p-6">
             <div className="flex items-center space-x-2">
               <Shield className="h-8 w-8 text-blue-400" />
@@ -48,7 +48,7 @@ export default function AdminLayout() {
             </div>
           </div>
 
-          <nav className="mt-6 px-3">
+          <nav className="mt-6 px-3" data-testid="admin-nav">
             {navigation.map((item) => {
               const Icon = item.icon;
               const active = isActive(item.href);
@@ -56,6 +56,7 @@ export default function AdminLayout() {
                 <Link
                   key={item.name}
                   to={item.href}
+                  data-testid={`admin-nav-${item.name.toLowerCase()}`}
                   className={`flex items-center space-x-3 px-4 py-3 rounded-lg mb-1 transition-colors ${
                     active
                       ? 'bg-blue-600 text-white'
