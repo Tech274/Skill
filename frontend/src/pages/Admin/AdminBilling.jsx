@@ -441,7 +441,7 @@ function PricingPlansTab({ onUpdate }) {
         <div className="text-center py-12 bg-gray-50 rounded-lg">
           <CreditCard className="h-12 w-12 text-gray-400 mx-auto mb-4" />
           <p className="text-gray-600">No pricing plans yet</p>
-          <p className="text-sm text-gray-500 mb-4">Click "Seed Default Plans" to create initial plans</p>
+          <p className="text-sm text-gray-500 mb-4">Click &quot;Seed Default Plans&quot; to create initial plans</p>
         </div>
       )}
 
@@ -613,11 +613,7 @@ function SubscriptionsTab() {
   const [showModal, setShowModal] = useState(false);
   const [extendDays, setExtendDays] = useState(30);
 
-  useEffect(() => {
-    fetchSubscriptions();
-  }, [search, statusFilter]);
-
-  const fetchSubscriptions = async () => {
+  const fetchSubscriptions = useCallback(async () => {
     try {
       const params = new URLSearchParams();
       if (search) params.append('search', search);
@@ -632,7 +628,11 @@ function SubscriptionsTab() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [search, statusFilter]);
+
+  useEffect(() => {
+    fetchSubscriptions();
+  }, [fetchSubscriptions]);
 
   const openDetailModal = async (sub) => {
     try {
@@ -873,11 +873,7 @@ function TransactionsTab() {
   const [showRefundModal, setShowRefundModal] = useState(false);
   const [refundReason, setRefundReason] = useState('');
 
-  useEffect(() => {
-    fetchTransactions();
-  }, [statusFilter, planFilter]);
-
-  const fetchTransactions = async () => {
+  const fetchTransactions = useCallback(async () => {
     try {
       const params = new URLSearchParams();
       if (statusFilter) params.append('status', statusFilter);
@@ -892,7 +888,11 @@ function TransactionsTab() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [statusFilter, planFilter]);
+
+  useEffect(() => {
+    fetchTransactions();
+  }, [fetchTransactions]);
 
   const openRefundModal = (txn) => {
     setSelectedTxn(txn);
@@ -1046,7 +1046,7 @@ function TransactionsTab() {
                 </div>
 
                 <div className="bg-yellow-50 p-3 rounded text-sm text-yellow-800">
-                  <strong>Note:</strong> Full refunds will revert the user's subscription to free tier.
+                  <strong>Note:</strong> Full refunds will revert the user&apos;s subscription to free tier.
                 </div>
 
                 <div className="flex space-x-3 pt-4">
